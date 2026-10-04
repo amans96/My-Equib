@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import ProtectedRoute from "../components/layout/ProtectedRoute";
 import AppLayout from "../components/layout/AppLayout";
-
+import LotteryPage from "../pages/admin/LotteryPage";
 // =========================================================
 // AUTH PAGES
 // =========================================================
@@ -236,10 +236,10 @@ const router = createBrowserRouter([
             element: <Placeholder title="Receipts" />,
           },
 
-          {
-            path: "/admin/equbs/:equbId/lottery",
-            element: <Placeholder title="Lottery" />,
-          },
+        {
+  path: "/admin/equbs/:equbId/lottery",
+  element: <LotteryPage />,
+},
         ],
       },
     ],

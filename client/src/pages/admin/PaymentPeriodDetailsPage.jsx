@@ -428,13 +428,12 @@ const handleProcessOCR = async (receiptId) => {
     try {
       setApproving(receiptId);
 
-      const response = await api.post(
-        `/payment-periods/${periodId}/receipts/${receiptId}/approve`,
-        {
-          reason:
-            "Payment verified by administrator",
-        }
-      );
+   const response = await api.post(
+  `/receipts/${receiptId}/approve`,
+  {
+    reason: "Payment verified by administrator",
+  }
+);
 
       setActionSuccess(
         response.data?.message ||
@@ -533,12 +532,12 @@ const handleProcessOCR = async (receiptId) => {
     try {
       setRejecting(receiptId);
 
-      const response = await api.post(
-        `/payment-periods/${periodId}/receipts/${receiptId}/reject`,
-        {
-          reason: rejectReason.trim(),
-        }
-      );
+    const response = await api.post(
+  `/receipts/${receiptId}/reject`,
+  {
+    reason: rejectReason.trim(),
+  }
+);
 
       setActionSuccess(
         response.data?.message ||

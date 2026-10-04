@@ -9,7 +9,10 @@ async function startServer() {
     await prisma.$connect();
 
     console.log("Database connected successfully");
-
+     console.log(
+  "Gemini key loaded:",
+  process.env.GEMINI_API_KEY ? "YES" : "NO"
+);
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });

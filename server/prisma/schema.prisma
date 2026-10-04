@@ -99,13 +99,10 @@ model EqubMembership {
   user User @relation(fields: [userId], references: [id])
   equb Equb @relation(fields: [equbId], references: [id])
 
-  // Number of Equb shares requested by the member
-  // Example: 0.5 = half share, 1 = full share, 2 = two shares
   shares Decimal @default(1) @db.Decimal(8, 2)
 
   joinedAt DateTime @default(now())
 
-  // New members must be approved by an admin
   status MembershipStatus @default(PENDING)
 
   memberNumber String?
@@ -116,8 +113,10 @@ model EqubMembership {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  payments    Payment[]
+  payments Payment[]
+
+  lotteryEntries LotteryEntry[]
+
   lotteryWins LotteryDraw[] @relation("LotteryWinner")
 
   @@unique([userId, equbId])
@@ -361,9 +360,6 @@ model PaymentVerification {
 model LotteryDraw {
   id String @id @default(uuid())
 
-  // One lottery draw belongs to one payment period.
-  // periodId is unique because each period can have
-  // only one lottery draw.
   periodId String @unique
 
   period PaymentPeriod @relation(fields: [periodId], references: [id])
@@ -373,7 +369,11 @@ model LotteryDraw {
   drawNumber Int
 
   scheduledAt DateTime?
+  startedAt   DateTime?
   executedAt  DateTime?
+
+  participantCount Int @default(0)
+  totalEntries     Int @default(0)
 
   winnerMembershipId String?
 
@@ -384,11 +384,14 @@ model LotteryDraw {
   payout Payout?
 
   createdAt DateTime @default(now())
-  equb      Equb?    @relation(fields: [equbId], references: [id])
-  equbId    String?
+
+  equbId String?
+
+  equb Equb? @relation(fields: [equbId], references: [id])
 
   @@index([status])
   @@index([winnerMembershipId])
+  @@index([equbId])
 }
 
 // ============================================================
@@ -398,21 +401,26 @@ model LotteryDraw {
 model LotteryEntry {
   id String @id @default(uuid())
 
-  lotteryId String
-  userId    String
+  lotteryId    String
+  userId       String
+  membershipId String
 
-  lottery LotteryDraw @relation(fields: [lotteryId], references: [id])
-  user    User        @relation(fields: [userId], references: [id])
+  lottery    LotteryDraw    @relation(fields: [lotteryId], references: [id])
+  user       User           @relation(fields: [userId], references: [id])
+  membership EqubMembership @relation(fields: [membershipId], references: [id])
 
   eligible Boolean @default(true)
 
   ticketNumber String
 
+  entryType LotteryEntryType @default(AUTOMATIC)
+
   createdAt DateTime @default(now())
 
-  @@unique([lotteryId, userId])
   @@unique([lotteryId, ticketNumber])
+  @@index([lotteryId])
   @@index([userId])
+  @@index([membershipId])
   @@index([eligible])
 }
 
@@ -631,6 +639,11 @@ enum LotteryStatus {
   RUNNING
   COMPLETED
   CANCELLED
+}
+
+enum LotteryEntryType {
+  AUTOMATIC
+  MANUAL
 }
 
 enum PayoutStatus {

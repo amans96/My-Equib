@@ -4,6 +4,7 @@ import authRoutes from "./routes/auth.routes.js";
 import membershipRoutes from "./routes/membership.routes.js"
 import equbRoutes from "./routes/equb.routes.js";
 import receiptRoutes from "./routes/receipt.routes.js";
+import lotteryRoutes from "./routes/lottery.routes.js"
 const app = express();
 
 // Middleware
@@ -21,6 +22,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api", membershipRoutes);
 app.use("/api/equbs", equbRoutes);
 app.use("/api", receiptRoutes);
+app.use("/api", lotteryRoutes);
 export default app;
 
 
