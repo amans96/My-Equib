@@ -1,0 +1,652 @@
+// This is your Prisma schema file.
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USER
+// ============================================================
+
+model User {
+  id           String  @id @default(uuid())
+  firstName    String
+  lastName     String
+  email        String  @unique
+  phone        String? @unique
+  passwordHash String
+  profileImage String?
+
+  role     UserRole @default(MEMBER)
+  isActive Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  memberships          EqubMembership[]
+  payments             Payment[]
+  receipts             Receipt[]
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  createdEqubs         Equb[]                @relation("EqubCreator")
+  managedEqubs         EqubAdmin[]
+  lotteryEntries       LotteryEntry[]
+  payouts              Payout[]
+  paymentVerifications PaymentVerification[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+// ============================================================
+// EQUB
+// ============================================================
+
+model Equb {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+
+  contributionAmount Decimal               @db.Decimal(12, 2)
+  frequency          ContributionFrequency
+
+  totalPeriods  Int
+  currentPeriod Int @default(0)
+
+  startDate DateTime
+  endDate   DateTime?
+
+  status   EqubStatus @default(PENDING)
+  currency String     @default("ETB")
+
+  createdById String
+  createdBy   User   @relation("EqubCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  memberships      EqubMembership[]
+  admins           EqubAdmin[]
+  periods          PaymentPeriod[]
+  bankAccounts     EqubBankAccount[]
+  bankTransactions BankTransaction[]
+  lotteryDraws     LotteryDraw[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+
+  @@index([status])
+  @@index([createdById])
+}
+
+// ============================================================
+// EQUB MEMBERSHIP
+// ============================================================
+
+model EqubMembership {
+  id String @id @default(uuid())
+
+  userId String
+  equbId String
+
+  user User @relation(fields: [userId], references: [id])
+  equb Equb @relation(fields: [equbId], references: [id])
+
+  // Number of Equb shares requested by the member
+  // Example: 0.5 = half share, 1 = full share, 2 = two shares
+  shares Decimal @default(1) @db.Decimal(8, 2)
+
+  joinedAt DateTime @default(now())
+
+  // New members must be approved by an admin
+  status MembershipStatus @default(PENDING)
+
+  memberNumber String?
+
+  totalPaid      Decimal @default(0) @db.Decimal(12, 2)
+  missedPayments Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  payments    Payment[]
+  lotteryWins LotteryDraw[] @relation("LotteryWinner")
+
+  @@unique([userId, equbId])
+  @@index([equbId])
+  @@index([userId])
+}
+
+// ============================================================
+// EQUB ADMIN
+// ============================================================
+
+model EqubAdmin {
+  id String @id @default(uuid())
+
+  equbId String
+  userId String
+
+  equb Equb @relation(fields: [equbId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  role EqubAdminRole @default(MANAGER)
+
+  createdAt DateTime @default(now())
+
+  @@unique([equbId, userId])
+  @@index([equbId])
+  @@index([userId])
+}
+
+// ============================================================
+// PAYMENT PERIOD
+// ============================================================
+
+model PaymentPeriod {
+  id String @id @default(uuid())
+
+  equbId String
+
+  equb Equb @relation(fields: [equbId], references: [id])
+
+  periodNumber Int
+
+  startDate DateTime
+  dueDate   DateTime
+  closedAt  DateTime?
+
+  status PaymentPeriodStatus @default(OPEN)
+
+  expectedAmount Decimal @db.Decimal(12, 2)
+
+  // Relations
+  payments    Payment[]
+  lotteryDraw LotteryDraw?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([equbId, periodNumber])
+  @@index([equbId])
+  @@index([status])
+}
+
+// ============================================================
+// PAYMENT
+// ============================================================
+
+model Payment {
+  id String @id @default(uuid())
+
+  membershipId String
+  periodId     String
+  userId       String
+
+  membership EqubMembership @relation(fields: [membershipId], references: [id])
+  period     PaymentPeriod  @relation(fields: [periodId], references: [id])
+  user       User           @relation(fields: [userId], references: [id])
+
+  expectedAmount Decimal  @db.Decimal(12, 2)
+  paidAmount     Decimal? @db.Decimal(12, 2)
+
+  status PaymentStatus @default(PENDING)
+
+  paymentDate     DateTime?
+  referenceNumber String?
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  receipts      Receipt[]
+  verifications PaymentVerification[]
+
+  @@unique([membershipId, periodId])
+  @@index([userId])
+  @@index([periodId])
+  @@index([status])
+}
+
+// ============================================================
+// RECEIPT
+// ============================================================
+
+model Receipt {
+  id String @id @default(uuid())
+
+  paymentId    String
+  uploadedById String
+
+  payment    Payment @relation(fields: [paymentId], references: [id])
+  uploadedBy User    @relation(fields: [uploadedById], references: [id])
+
+  imageUrl   String
+  storageKey String?
+
+  originalFileName String?
+  mimeType         String?
+  fileSize         Int?
+
+  status ReceiptStatus @default(UPLOADED)
+
+  ocrProcessed Boolean @default(false)
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relation
+  ocrData OCRData?
+
+  @@index([paymentId])
+  @@index([uploadedById])
+  @@index([status])
+}
+
+// ============================================================
+// OCR DATA
+// ============================================================
+
+model OCRData {
+  id String @id @default(uuid())
+
+  receiptId String @unique
+
+  receipt Receipt @relation(fields: [receiptId], references: [id])
+
+  transactionReference String?
+
+  senderName    String?
+  senderAccount String?
+
+  receiverName    String?
+  receiverAccount String?
+
+  amount Decimal? @db.Decimal(12, 2)
+
+  transactionDate DateTime?
+  bankName        String?
+
+  rawText    String?
+  confidence Decimal? @db.Decimal(5, 2)
+
+  processedAt DateTime?
+
+  @@index([transactionReference])
+}
+
+// ============================================================
+// BANK TRANSACTION
+// ============================================================
+
+model BankTransaction {
+  id String @id @default(uuid())
+
+  equbId String
+
+  equb Equb @relation(fields: [equbId], references: [id])
+
+  transactionReference String
+  bankName             String
+
+  accountNumber String?
+
+  senderName    String?
+  senderAccount String?
+
+  receiverName    String?
+  receiverAccount String?
+
+  amount          Decimal  @db.Decimal(12, 2)
+  transactionDate DateTime
+
+  description String?
+
+  status BankTransactionStatus @default(UNMATCHED)
+
+  source BankTransactionSource
+
+  importedAt DateTime @default(now())
+
+  // Payment that this bank transaction was matched to.
+  // We keep this as a scalar for now because a bank transaction
+  // can initially exist without being matched.
+  matchedPaymentId String?
+
+  @@unique([equbId, transactionReference])
+  @@index([transactionDate])
+  @@index([status])
+  @@index([matchedPaymentId])
+}
+
+// ============================================================
+// PAYMENT VERIFICATION
+// ============================================================
+
+model PaymentVerification {
+  id String @id @default(uuid())
+
+  paymentId  String
+  reviewerId String
+
+  payment  Payment @relation(fields: [paymentId], references: [id])
+  reviewer User    @relation(fields: [reviewerId], references: [id])
+
+  decision VerificationDecision
+
+  reason String?
+
+  verifiedAmount Decimal? @db.Decimal(12, 2)
+
+  verifiedAt DateTime @default(now())
+
+  @@index([paymentId])
+  @@index([reviewerId])
+  @@index([decision])
+}
+
+// ============================================================
+// LOTTERY DRAW
+// ============================================================
+
+model LotteryDraw {
+  id String @id @default(uuid())
+
+  // One lottery draw belongs to one payment period.
+  // periodId is unique because each period can have
+  // only one lottery draw.
+  periodId String @unique
+
+  period PaymentPeriod @relation(fields: [periodId], references: [id])
+
+  status LotteryStatus @default(PENDING)
+
+  drawNumber Int
+
+  scheduledAt DateTime?
+  executedAt  DateTime?
+
+  winnerMembershipId String?
+
+  winnerMembership EqubMembership? @relation("LotteryWinner", fields: [winnerMembershipId], references: [id])
+
+  entries LotteryEntry[]
+
+  payout Payout?
+
+  createdAt DateTime @default(now())
+  equb      Equb?    @relation(fields: [equbId], references: [id])
+  equbId    String?
+
+  @@index([status])
+  @@index([winnerMembershipId])
+}
+
+// ============================================================
+// LOTTERY ENTRY
+// ============================================================
+
+model LotteryEntry {
+  id String @id @default(uuid())
+
+  lotteryId String
+  userId    String
+
+  lottery LotteryDraw @relation(fields: [lotteryId], references: [id])
+  user    User        @relation(fields: [userId], references: [id])
+
+  eligible Boolean @default(true)
+
+  ticketNumber String
+
+  createdAt DateTime @default(now())
+
+  @@unique([lotteryId, userId])
+  @@unique([lotteryId, ticketNumber])
+  @@index([userId])
+  @@index([eligible])
+}
+
+// ============================================================
+// PAYOUT
+// ============================================================
+
+model Payout {
+  id String @id @default(uuid())
+
+  // One lottery draw can have only one payout.
+  lotteryId String @unique
+
+  lottery LotteryDraw @relation(fields: [lotteryId], references: [id])
+
+  userId String
+
+  user User @relation(fields: [userId], references: [id])
+
+  amount Decimal @db.Decimal(12, 2)
+
+  status PayoutStatus @default(PENDING)
+
+  paymentReference String?
+  paidAt           DateTime?
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================
+// EQUB BANK ACCOUNT
+// ============================================================
+
+model EqubBankAccount {
+  id String @id @default(uuid())
+
+  equbId String
+
+  equb Equb @relation(fields: [equbId], references: [id])
+
+  bankName      String
+  accountName   String
+  accountNumber String
+  branchName    String?
+
+  isPrimary Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([equbId])
+  @@index([isActive])
+}
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
+
+model Notification {
+  id String @id @default(uuid())
+
+  userId String
+  equbId String?
+
+  user User  @relation(fields: [userId], references: [id])
+  equb Equb? @relation(fields: [equbId], references: [id])
+
+  title   String
+  message String
+
+  type NotificationType
+
+  isRead Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([equbId])
+  @@index([type])
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  userId String?
+  equbId String?
+
+  user User? @relation(fields: [userId], references: [id])
+  equb Equb? @relation(fields: [equbId], references: [id])
+
+  action   String
+  entity   String
+  entityId String?
+
+  oldData Json?
+  newData Json?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([equbId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  MEMBER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum EqubStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContributionFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  SUSPENDED
+  REMOVED
+  COMPLETED
+}
+
+enum EqubAdminRole {
+  OWNER
+  MANAGER
+  TREASURER
+  AUDITOR
+}
+
+enum PaymentPeriodStatus {
+  UPCOMING
+  OPEN
+  CLOSED
+  DRAW_PENDING
+  DRAW_COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUBMITTED
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  NEEDS_REVIEW
+  DUPLICATE
+  UNDERPAID
+  OVERPAID
+}
+
+enum ReceiptStatus {
+  UPLOADED
+  PROCESSING
+  PROCESSED
+  VERIFIED
+  REJECTED
+}
+
+enum BankTransactionStatus {
+  UNMATCHED
+  MATCHED
+  DUPLICATE
+  SUSPICIOUS
+  REVERSED
+}
+
+enum BankTransactionSource {
+  MANUAL
+  CSV
+  EXCEL
+  API
+  BANK_STATEMENT
+}
+
+enum VerificationDecision {
+  VERIFIED
+  REJECTED
+  NEEDS_REVIEW
+  DUPLICATE
+  UNDERPAID
+  OVERPAID
+}
+
+enum LotteryStatus {
+  PENDING
+  READY
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum NotificationType {
+  PAYMENT_REMINDER
+  PAYMENT_SUBMITTED
+  PAYMENT_VERIFIED
+  PAYMENT_REJECTED
+  LOTTERY_RESULT
+  PAYOUT
+  SYSTEM
+}

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "EqubMembership" ADD COLUMN     "shares" DECIMAL(8,2) NOT NULL DEFAULT 1,
+ALTER COLUMN "status" SET DEFAULT 'PENDING';
