@@ -33,7 +33,7 @@ const calculateTicketCount = (shares) => {
 /*
  * Get or create the lottery draw for a payment period.
  */
-export const getOrCreateLottery = async (periodId) => {
+export const getLottery = async (periodId) => {
   const period = await prisma.paymentPeriod.findUnique({
     where: {
       id: periodId,
@@ -95,56 +95,7 @@ export const getOrCreateLottery = async (periodId) => {
 
   let lottery = period.lotteryDraw;
 
-  if (!lottery) {
-    lottery = await prisma.lotteryDraw.create({
-      data: {
-        periodId: period.id,
-        equbId: period.equbId,
-        drawNumber: period.periodNumber,
-        status: "PENDING",
-      },
-      include: {
-        entries: {
-          where: {
-            eligible: true,
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileImage: true,
-              },
-            },
-            membership: {
-              select: {
-                id: true,
-                shares: true,
-                memberNumber: true,
-                status: true,
-              },
-            },
-          },
-          orderBy: {
-            ticketNumber: "asc",
-          },
-        },
-        winnerMembership: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileImage: true,
-              },
-            },
-          },
-        },
-      },
-    });
-  }
+
 
   return {
     period,
@@ -194,7 +145,7 @@ export const getLotteryMembers = async (periodId) => {
     throw new Error("Payment period not found");
   }
 
-  const { lottery } = await getOrCreateLottery(periodId);
+  const { lottery } = await getLottery(periodId);
 
   /*
    * Get every active member of this Equb.
@@ -248,9 +199,9 @@ export const getLotteryMembers = async (periodId) => {
      *
      * eligible: true
      */
-    const memberEntries = lottery.entries.filter(
-      (entry) => entry.membershipId === membership.id
-    );
+ const memberEntries = (lottery?.entries || []).filter(
+  (entry) => entry.membershipId === membership.id
+);
 
     const ticketCount = memberEntries.length;
 
@@ -370,9 +321,13 @@ export const addMemberToLottery = async ({
   membershipId,
   entryType = "MANUAL",
 }) => {
-  const { lottery } = await getOrCreateLottery(periodId);
+const { lottery } = await getLottery(periodId);
 
-  if (lottery.status === "RUNNING") {
+if (!lottery) {
+  throw new Error("Lottery has not been prepared yet");
+}
+
+if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
   }
 
@@ -517,7 +472,7 @@ export const removeMemberFromLottery = async ({
   periodId,
   membershipId,
 }) => {
-  const { lottery } = await getOrCreateLottery(periodId);
+  const { lottery } = await getLottery(periodId);
 
   if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
@@ -565,7 +520,7 @@ export const removeMemberFromLottery = async ({
  * in an earlier period of the same Equb.
  */
 export const removePreviousWinners = async (periodId) => {
-  const { lottery } = await getOrCreateLottery(periodId);
+  const { lottery } = await getLottery(periodId);
 
   if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
@@ -660,8 +615,36 @@ const updateLotteryCounts = async (lotteryId) => {
  * for this period is VERIFIED.
  */
 export const prepareLottery = async (periodId) => {
-  const { lottery } = await getOrCreateLottery(periodId);
+  // 1. Find the payment period.
+  const period = await prisma.paymentPeriod.findUnique({
+    where: { id: periodId },
+    select: {
+      id: true,
+      equbId: true,
+      periodNumber: true,
+    },
+  });
 
+  if (!period) {
+    throw new Error("Payment period not found");
+  }
+
+  // 2. Create the lottery if it doesn't exist.
+  // If it already exists, reuse it.
+  const lottery = await prisma.lotteryDraw.upsert({
+    where: {
+      periodId,
+    },
+    update: {},
+    create: {
+      periodId: period.id,
+      equbId: period.equbId,
+      drawNumber: period.periodNumber,
+      status: "PENDING",
+    },
+  });
+
+  // 3. Prevent modifications after the lottery starts.
   if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
   }
@@ -670,9 +653,10 @@ export const prepareLottery = async (periodId) => {
     throw new Error("Lottery has already been completed");
   }
 
+  // 4. Find active members who have verified payments.
   const memberships = await prisma.equbMembership.findMany({
     where: {
-      equbId: lottery.equbId,
+      equbId: period.equbId,
       status: "ACTIVE",
       payments: {
         some: {
@@ -688,27 +672,54 @@ export const prepareLottery = async (periodId) => {
 
   let addedMembers = 0;
 
+  // 5. Add each eligible member without duplicating entries.
   for (const membership of memberships) {
-    try {
-      await addMemberToLottery({
-        periodId,
+    const existingEntry = await prisma.lotteryEntry.findFirst({
+      where: {
+        lotteryId: lottery.id,
         membershipId: membership.id,
-        entryType: "AUTOMATIC",
-      });
+        eligible: true,
+      },
+      select: {
+        id: true,
+      },
+    });
 
-      addedMembers++;
-    } catch (error) {
-      /*
-       * If already added, ignore it.
-       * Other errors should also not prevent the remaining
-       * verified members from being processed.
-       */
+    // This member has already been added.
+    if (existingEntry) {
+      continue;
     }
+
+    // Add the member and generate tickets based on their shares.
+    await addMemberToLottery({
+      periodId,
+      membershipId: membership.id,
+      entryType: "AUTOMATIC",
+    });
+
+    addedMembers++;
   }
 
+  // 6. Update participant and ticket counts.
   await updateLotteryCounts(lottery.id);
 
-  return getOrCreateLottery(periodId);
+  // 7. Mark the lottery as ready.
+  await prisma.lotteryDraw.update({
+    where: {
+      id: lottery.id,
+    },
+    data: {
+      status: "READY",
+    },
+  });
+
+  // 8. Return the updated lottery.
+  const result = await getLottery(periodId);
+
+  return {
+    ...result,
+    addedMembers,
+  };
 };
 
 /*
@@ -720,7 +731,7 @@ export const prepareLottery = async (periodId) => {
  * - pool is frozen
  */
 export const startLottery = async (periodId) => {
-  const { lottery } = await getOrCreateLottery(periodId);
+  const { lottery } = await getLottery(periodId);
 
   if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
@@ -772,7 +783,7 @@ export const startLottery = async (periodId) => {
  * members with more tickets occupy more positions in the pool.
  */
 export const drawLotteryWinner = async (periodId) => {
-  const lotteryData = await getOrCreateLottery(periodId);
+  const lotteryData = await getLottery(periodId);
   const lottery = lotteryData.lottery;
 
   if (lottery.status !== "RUNNING") {

@@ -302,21 +302,20 @@ const LotteryPage = () => {
           getLotteryMembers(selectedPeriodId),
         ]);
 
-      const lotteryData =
-        lotteryResponse.data ||
-        lotteryResponse.lottery ||
-        lotteryResponse;
+    const lotteryData =
+  lotteryResponse.data?.lottery ||
+  lotteryResponse.lottery ||
+  null;
 
-     const membersData =
+const membersData =
   membersResponse.data?.members ||
   membersResponse.members ||
   [];
 
 setLottery(lotteryData);
+
 setMembers(
-  Array.isArray(membersData)
-    ? membersData
-    : []
+  Array.isArray(membersData) ? membersData : []
 );
     } catch (error) {
       console.error(
@@ -622,16 +621,19 @@ const totalTickets = useMemo(() => {
   |--------------------------------------------------------------------------
   */
 const handleAddMember = async (member) => {
-  const membershipId = member.membershipId;
+  const membershipId =
+    member.membershipId || member.id;
 
   if (!membershipId || !selectedPeriodId) {
     return;
   }
 
-  const memberName = getFullName({
-    firstName: member.firstName,
-    lastName: member.lastName,
-  });
+  const memberName = getFullName(
+    member.user || {
+      firstName: member.firstName,
+      lastName: member.lastName,
+    }
+  );
 
   clearMessages();
 

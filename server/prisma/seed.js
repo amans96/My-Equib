@@ -8,7 +8,15 @@ import { fileURLToPath } from "url";
 const prisma = new PrismaClient();
 
 const EQUb_ID = "2c1ba2fc-1e55-4685-aa08-ac6d22da98ec";
-const PERIOD_ID = "02375f46-1ccf-47bb-9af5-3a478e0d8299";
+const PERIOD_ID = "02494677-99cd-4b4a-b5be-fd913974c3cc";
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
+
+const MEMBER_COUNT = 100;
+
+const MEMBER_PASSWORD = "Member12345";
 
 // ============================================================
 // FILE PATHS
@@ -27,13 +35,54 @@ const uploadsDirectory = path.resolve(
   "../uploads/receipts"
 );
 
-const seededReceiptPath = path.join(
-  uploadsDirectory,
-  "seed-receipt.jpg"
-);
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
+
+const padNumber = (number, length = 3) => {
+  return String(number).padStart(length, "0");
+};
+
+const getMemberPhone = (index) => {
+  // 0911111111
+  // 0911111112
+  // ...
+  // 0911111210
+
+  return `091111${String(110 + index).padStart(4, "0")}`;
+};
+
+const getMemberEmail = (index) => {
+  return `member${padNumber(index)}@equb.local`;
+};
+
+const getMemberFirstName = (index) => {
+  return `Member${padNumber(index)}`;
+};
+
+const getMemberLastName = (index) => {
+  return `User${padNumber(index)}`;
+};
+
+const getMemberNumber = (index) => {
+  return `EQB-${padNumber(index)}`;
+};
+
+const getReceiptFileName = (index) => {
+  return `seed-receipt-${padNumber(index)}.jpg`;
+};
+
+const getTransactionReference = (index) => {
+  return `TXN-SEED-20261004-${padNumber(index)}`;
+};
+
+// ============================================================
+// MAIN
+// ============================================================
 
 async function main() {
-  console.log("🌱 Starting database seed...");
+  console.log("🌱 Starting 100-member Equb database seed...");
+  console.log("");
 
   // ============================================================
   // 1. CHECK REAL RECEIPT IMAGE
@@ -47,20 +96,19 @@ async function main() {
 
   console.log("✅ Test receipt image found");
   console.log(`   Source: ${sourceReceiptPath}`);
+  console.log("");
 
   // Create uploads directory if it does not exist
   fs.mkdirSync(uploadsDirectory, {
     recursive: true,
   });
 
-  // Copy the real receipt image
-  fs.copyFileSync(
-    sourceReceiptPath,
-    seededReceiptPath
-  );
+  // Get source image information
+  const sourceImageStats = fs.statSync(sourceReceiptPath);
 
-  console.log("✅ Test receipt copied");
-  console.log(`   Destination: ${seededReceiptPath}`);
+  console.log("📷 Source receipt information");
+  console.log(`   Size: ${sourceImageStats.size} bytes`);
+  console.log("");
 
   // ============================================================
   // 2. CREATE / UPDATE ADMIN
@@ -100,6 +148,7 @@ async function main() {
   console.log(`   Phone: ${admin.phone}`);
   console.log(`   Email: ${admin.email}`);
   console.log(`   Role: ${admin.role}`);
+  console.log("");
 
   // ============================================================
   // 3. FIND EXISTING EQUB
@@ -124,6 +173,8 @@ async function main() {
     `   Contribution: ${equb.contributionAmount}`
   );
   console.log(`   Frequency: ${equb.frequency}`);
+  console.log(`   Currency: ${equb.currency}`);
+  console.log("");
 
   // ============================================================
   // 4. FIND EXISTING PAYMENT PERIOD
@@ -151,363 +202,561 @@ async function main() {
   console.log(`   ID: ${period.id}`);
   console.log(`   Number: ${period.periodNumber}`);
   console.log(`   Status: ${period.status}`);
+  console.log("");
 
   // ============================================================
-  // 5. CREATE / UPDATE MEMBER
+  // 5. HASH MEMBER PASSWORD ONCE
   // ============================================================
 
-  const memberPassword = "Member12345";
+  console.log("🔐 Hashing member password...");
 
   const memberPasswordHash = await bcrypt.hash(
-    memberPassword,
+    MEMBER_PASSWORD,
     12
   );
 
-  const member = await prisma.user.upsert({
-    where: {
-      phone: "0911111111",
-    },
-
-    update: {
-      firstName: "Abebe",
-      lastName: "Kebede",
-      email: "abebe@equb.local",
-      passwordHash: memberPasswordHash,
-      role: "MEMBER",
-      isActive: true,
-    },
-
-    create: {
-      firstName: "Abebe",
-      lastName: "Kebede",
-      email: "abebe@equb.local",
-      phone: "0911111111",
-      passwordHash: memberPasswordHash,
-      role: "MEMBER",
-      isActive: true,
-    },
-  });
-
-  console.log("✅ MEMBER created/updated");
-  console.log(`   ID: ${member.id}`);
-  console.log(
-    `   Name: ${member.firstName} ${member.lastName}`
-  );
-  console.log(`   Phone: ${member.phone}`);
-  console.log(`   Email: ${member.email}`);
+  console.log("✅ Member password hashed");
+  console.log("");
 
   // ============================================================
-  // 6. CREATE / UPDATE MEMBERSHIP
+  // 6. CREATE 100 MEMBERS
   // ============================================================
-
-  const membership = await prisma.equbMembership.upsert({
-    where: {
-      userId_equbId: {
-        userId: member.id,
-        equbId: equb.id,
-      },
-    },
-
-    update: {
-      status: "ACTIVE",
-      shares: 1,
-      memberNumber: "EQB-001",
-      missedPayments: 0,
-    },
-
-    create: {
-      userId: member.id,
-      equbId: equb.id,
-      shares: 1,
-      status: "ACTIVE",
-      memberNumber: "EQB-001",
-      totalPaid: 0,
-      missedPayments: 0,
-    },
-  });
-
-  console.log("✅ Membership created/updated");
-  console.log(`   ID: ${membership.id}`);
-  console.log(`   Status: ${membership.status}`);
-  console.log(`   Shares: ${membership.shares}`);
-
-  // ============================================================
-  // 7. CALCULATE EXPECTED AMOUNT
-  // ============================================================
-
-  const expectedAmount =
-    Number(equb.contributionAmount) *
-    Number(membership.shares);
 
   console.log(
-    `💰 Expected payment: ${expectedAmount} ${equb.currency}`
+    `👥 Creating/updating ${MEMBER_COUNT} members...`
   );
+  console.log("");
 
-  // ============================================================
-  // 8. CREATE / UPDATE PAYMENT
-  // ============================================================
+  const createdMembers = [];
 
-  const payment = await prisma.payment.upsert({
-    where: {
-      membershipId_periodId: {
-        membershipId: membership.id,
-        periodId: period.id,
-      },
-    },
+  for (let index = 1; index <= MEMBER_COUNT; index++) {
+    console.log(
+      `──────────────────────────────────────────────`
+    );
 
-    update: {
-      userId: member.id,
-      expectedAmount,
-      paidAmount: expectedAmount,
-      status: "VERIFIED",
-      paymentDate: new Date(),
-      referenceNumber: "TXN-SEED-20261001-001",
-      notes: "Seeded test payment using real receipt image.",
-    },
+    console.log(
+      `👤 Processing member ${index}/${MEMBER_COUNT}`
+    );
 
-    create: {
-      membershipId: membership.id,
-      periodId: period.id,
-      userId: member.id,
+    // ----------------------------------------------------------
+    // MEMBER DATA
+    // ----------------------------------------------------------
 
-      expectedAmount,
-      paidAmount: expectedAmount,
+    const firstName = getMemberFirstName(index);
+    const lastName = getMemberLastName(index);
 
-      status: "VERIFIED",
+    const phone = getMemberPhone(index);
+    const email = getMemberEmail(index);
 
-      paymentDate: new Date(),
-      referenceNumber: "TXN-SEED-20261001-001",
+    const memberNumber = getMemberNumber(index);
 
-      notes:
-        "Seeded test payment using real receipt image.",
-    },
-  });
+    // ----------------------------------------------------------
+    // CREATE / UPDATE USER
+    // ----------------------------------------------------------
 
-  console.log("✅ Payment created/updated");
-  console.log(`   ID: ${payment.id}`);
-  console.log(`   Expected: ${payment.expectedAmount}`);
-  console.log(`   Paid: ${payment.paidAmount}`);
-  console.log(`   Status: ${payment.status}`);
-
-  // ============================================================
-  // 9. GET REAL IMAGE INFORMATION
-  // ============================================================
-
-  const imageStats = fs.statSync(seededReceiptPath);
-
-  console.log("📷 Receipt image information");
-  console.log(`   Size: ${imageStats.size} bytes`);
-
-  // ============================================================
-  // 10. CREATE / UPDATE RECEIPT
-  // ============================================================
-
-  let receipt = await prisma.receipt.findFirst({
-    where: {
-      paymentId: payment.id,
-    },
-  });
-
-  if (receipt) {
-    receipt = await prisma.receipt.update({
+    const member = await prisma.user.upsert({
       where: {
-        id: receipt.id,
+        phone,
       },
 
-      data: {
-        uploadedById: member.id,
+      update: {
+        firstName,
+        lastName,
+        email,
+        passwordHash: memberPasswordHash,
+        role: "MEMBER",
+        isActive: true,
+      },
 
-        imageUrl:
-          "/uploads/receipts/seed-receipt.jpg",
-
-        storageKey:
-          "receipts/seed-receipt.jpg",
-
-        originalFileName:
-          "test-receipt.jpg",
-
-        mimeType: "image/jpeg",
-
-        fileSize: imageStats.size,
-
-        status: "UPLOADED",
-
-        ocrProcessed: false,
+      create: {
+        firstName,
+        lastName,
+        email,
+        phone,
+        passwordHash: memberPasswordHash,
+        role: "MEMBER",
+        isActive: true,
       },
     });
-  } else {
-    receipt = await prisma.receipt.create({
-      data: {
+
+    console.log(
+      `   ✅ User: ${firstName} ${lastName}`
+    );
+
+    console.log(
+      `   📱 Phone: ${phone}`
+    );
+
+    console.log(
+      `   📧 Email: ${email}`
+    );
+
+    // ----------------------------------------------------------
+    // CREATE / UPDATE MEMBERSHIP
+    // ----------------------------------------------------------
+
+    const membership =
+      await prisma.equbMembership.upsert({
+        where: {
+          userId_equbId: {
+            userId: member.id,
+            equbId: equb.id,
+          },
+        },
+
+        update: {
+          status: "ACTIVE",
+          shares: 1,
+          memberNumber,
+          missedPayments: 0,
+        },
+
+        create: {
+          userId: member.id,
+          equbId: equb.id,
+          shares: 1,
+          status: "ACTIVE",
+          memberNumber,
+          totalPaid: 0,
+          missedPayments: 0,
+        },
+      });
+
+    console.log(
+      `   ✅ Membership: ${membership.id}`
+    );
+
+    console.log(
+      `   🎫 Member number: ${membership.memberNumber}`
+    );
+
+    // ----------------------------------------------------------
+    // CALCULATE EXPECTED AMOUNT
+    // ----------------------------------------------------------
+
+    const expectedAmount =
+      Number(equb.contributionAmount) *
+      Number(membership.shares);
+
+    console.log(
+      `   💰 Expected amount: ${expectedAmount} ${equb.currency}`
+    );
+
+    // ----------------------------------------------------------
+    // RECEIPT FILE
+    // ----------------------------------------------------------
+
+    const receiptFileName =
+      getReceiptFileName(index);
+
+    const seededReceiptPath =
+      path.join(
+        uploadsDirectory,
+        receiptFileName
+      );
+
+    // Copy real receipt image for this member
+    fs.copyFileSync(
+      sourceReceiptPath,
+      seededReceiptPath
+    );
+
+    const imageStats =
+      fs.statSync(seededReceiptPath);
+
+    console.log(
+      `   📷 Receipt copied: ${receiptFileName}`
+    );
+
+    // ----------------------------------------------------------
+    // TRANSACTION REFERENCE
+    // ----------------------------------------------------------
+
+    const transactionReference =
+      getTransactionReference(index);
+
+    // ----------------------------------------------------------
+    // CREATE / UPDATE PAYMENT
+    // ----------------------------------------------------------
+
+    const payment =
+      await prisma.payment.upsert({
+        where: {
+          membershipId_periodId: {
+            membershipId: membership.id,
+            periodId: period.id,
+          },
+        },
+
+        update: {
+          userId: member.id,
+
+          expectedAmount,
+
+          paidAmount: null,
+
+          status: "PENDING",
+
+          paymentDate: null,
+
+          referenceNumber: null,
+
+          notes:
+            "Seeded receipt awaiting OCR processing.",
+        },
+
+        create: {
+          membershipId: membership.id,
+          periodId: period.id,
+          userId: member.id,
+
+          expectedAmount,
+
+          paidAmount: null,
+
+          status: "PENDING",
+
+          paymentDate: null,
+
+          referenceNumber: null,
+
+          notes:
+            "Seeded receipt awaiting OCR processing.",
+        },
+      });
+
+    console.log(
+      `   ✅ Payment: ${payment.id}`
+    );
+
+    console.log(
+      `   📊 Payment status: ${payment.status}`
+    );
+
+    // ----------------------------------------------------------
+    // CREATE / UPDATE RECEIPT
+    // ----------------------------------------------------------
+
+    let receipt =
+      await prisma.receipt.findFirst({
+        where: {
+          paymentId: payment.id,
+        },
+      });
+
+    const receiptData = {
+      uploadedById: member.id,
+
+      imageUrl:
+        `/uploads/receipts/${receiptFileName}`,
+
+      storageKey:
+        `receipts/${receiptFileName}`,
+
+      originalFileName:
+        "test-receipt.jpg",
+
+      mimeType: "image/jpeg",
+
+      fileSize: imageStats.size,
+
+      status: "UPLOADED",
+
+      ocrProcessed: false,
+    };
+
+    if (receipt) {
+      receipt =
+        await prisma.receipt.update({
+          where: {
+            id: receipt.id,
+          },
+
+          data: receiptData,
+        });
+    } else {
+      receipt =
+        await prisma.receipt.create({
+          data: {
+            paymentId: payment.id,
+
+            ...receiptData,
+          },
+        });
+    }
+
+    console.log(
+      `   ✅ Receipt: ${receipt.id}`
+    );
+
+    console.log(
+      `   📁 File: ${receiptFileName}`
+    );
+
+    console.log(
+      `   📦 Size: ${receipt.fileSize} bytes`
+    );
+
+    // ----------------------------------------------------------
+    // REMOVE OLD OCR DATA
+    // ----------------------------------------------------------
+
+    await prisma.oCRData.deleteMany({
+      where: {
+        receiptId: receipt.id,
+      },
+    });
+
+    // ----------------------------------------------------------
+    // REMOVE OLD VERIFICATION
+    // ----------------------------------------------------------
+
+    await prisma.paymentVerification.deleteMany({
+      where: {
         paymentId: payment.id,
-        uploadedById: member.id,
-
-        imageUrl:
-          "/uploads/receipts/seed-receipt.jpg",
-
-        storageKey:
-          "receipts/seed-receipt.jpg",
-
-        originalFileName:
-          "test-receipt.jpg",
-
-        mimeType: "image/jpeg",
-
-        fileSize: imageStats.size,
-
-        status: "UPLOADED",
-
-        ocrProcessed: false,
       },
     });
+
+    // ----------------------------------------------------------
+    // MAKE SURE PAYMENT IS PENDING
+    // ----------------------------------------------------------
+
+    await prisma.payment.update({
+      where: {
+        id: payment.id,
+      },
+
+      data: {
+        status: "PENDING",
+
+        paidAmount: null,
+
+        paymentDate: null,
+
+        referenceNumber: null,
+
+        notes:
+          "Seeded receipt awaiting OCR processing.",
+      },
+    });
+
+    // ----------------------------------------------------------
+    // UPDATE MEMBERSHIP TOTAL PAID
+    // ----------------------------------------------------------
+
+    const verifiedPayments =
+      await prisma.payment.findMany({
+        where: {
+          membershipId: membership.id,
+
+          status: "VERIFIED",
+        },
+
+        select: {
+          paidAmount: true,
+        },
+      });
+
+    const totalPaid =
+      verifiedPayments.reduce(
+        (total, item) => {
+          return (
+            total +
+            Number(item.paidAmount || 0)
+          );
+        },
+        0
+      );
+
+    await prisma.equbMembership.update({
+      where: {
+        id: membership.id,
+      },
+
+      data: {
+        totalPaid,
+      },
+    });
+
+    // ----------------------------------------------------------
+    // SAVE MEMBER RESULT
+    // ----------------------------------------------------------
+
+    createdMembers.push({
+      index,
+      userId: member.id,
+      membershipId: membership.id,
+      paymentId: payment.id,
+      receiptId: receipt.id,
+      memberNumber,
+      phone,
+      email,
+      expectedAmount,
+    });
+
+    console.log(
+      `   ✅ Member ${index} completed`
+    );
   }
 
-  console.log("✅ REAL receipt record created/updated");
-  console.log(`   Receipt ID: ${receipt.id}`);
-  console.log(`   File: ${receipt.originalFileName}`);
-  console.log(`   Size: ${receipt.fileSize} bytes`);
-  console.log(`   Status: ${receipt.status}`);
-  console.log(`   OCR processed: ${receipt.ocrProcessed}`);
-
   // ============================================================
-  // 11. REMOVE OLD SEEDED OCR DATA
-  //
-  // We intentionally DO NOT create OCRData here.
-  //
-  // This is important:
-  //
-  // REAL IMAGE
-  //      ↓
-  // OCR SERVICE
-  //      ↓
-  // OCRData
-  //
-  // That way we can actually test whether the OCR works.
+  // 7. FINAL COUNTS
   // ============================================================
 
-  await prisma.oCRData.deleteMany({
-    where: {
-      receiptId: receipt.id,
-    },
-  });
+  const membershipCount =
+    await prisma.equbMembership.count({
+      where: {
+        equbId: equb.id,
+      },
+    });
 
-  console.log("🧹 Existing OCR data removed");
+  const periodPaymentCount =
+    await prisma.payment.count({
+      where: {
+        periodId: period.id,
+      },
+    });
 
-  // ============================================================
-  // 12. RESET PAYMENT VERIFICATION FOR OCR TEST
-  // ============================================================
-
-  await prisma.paymentVerification.deleteMany({
-    where: {
-      paymentId: payment.id,
-    },
-  });
-
-await prisma.payment.update({
-  where: {
-    id: payment.id,
-  },
-
-  data: {
-    status: "PENDING",
-    paidAmount: null,
-    paymentDate: null,
-    referenceNumber: null,
-    notes: "Seeded receipt awaiting OCR processing.",
-  },
-});
-
-  console.log("🔄 Payment reset to PENDING for OCR test");
+  const receiptCount =
+    await prisma.receipt.count({
+      where: {
+        payment: {
+          periodId: period.id,
+        },
+      },
+    });
 
   // ============================================================
-  // 13. UPDATE MEMBERSHIP TOTAL PAID
+  // 8. FINAL SUMMARY
   // ============================================================
 
-  const verifiedPayments = await prisma.payment.findMany({
-    where: {
-      membershipId: membership.id,
-      status: "VERIFIED",
-    },
-
-    select: {
-      paidAmount: true,
-    },
-  });
-
-  const totalPaid = verifiedPayments.reduce(
-    (total, item) => {
-      return total + Number(item.paidAmount || 0);
-    },
-    0
-  );
-
-  await prisma.equbMembership.update({
-    where: {
-      id: membership.id,
-    },
-
-    data: {
-      totalPaid,
-    },
-  });
-
+  console.log("");
   console.log(
-    `✅ Membership totalPaid updated: ${totalPaid}`
+    "================================================"
+  );
+  console.log(
+    "🎉 100-MEMBER DATABASE SEED COMPLETED"
+  );
+  console.log(
+    "================================================"
   );
 
-  // ============================================================
-  // FINAL SUMMARY
-  // ============================================================
-
   console.log("");
-  console.log("==============================================");
-  console.log("🎉 DATABASE SEED COMPLETED");
-  console.log("==============================================");
 
-  console.log("");
   console.log("ADMIN");
   console.log("  Phone:    0900000000");
-  console.log(`  Password: ${adminPassword}`);
+  console.log(
+    `  Password: ${adminPassword}`
+  );
 
   console.log("");
-  console.log("MEMBER");
-  console.log("  Phone:    0911111111");
-  console.log("  Email:    abebe@equb.local");
-  console.log(`  Password: ${memberPassword}`);
 
-  console.log("");
   console.log("EQUB");
-  console.log(`  ID:   ${equb.id}`);
-  console.log(`  Name: ${equb.name}`);
+  console.log(`  ID:       ${equb.id}`);
+  console.log(`  Name:     ${equb.name}`);
+  console.log(
+    `  Members:  ${membershipCount}`
+  );
 
   console.log("");
+
   console.log("PAYMENT PERIOD");
-  console.log(`  ID:     ${period.id}`);
-  console.log(`  Number: ${period.periodNumber}`);
+  console.log(`  ID:       ${period.id}`);
+  console.log(
+    `  Number:   ${period.periodNumber}`
+  );
+  console.log(
+    `  Payments: ${periodPaymentCount}`
+  );
 
   console.log("");
-  console.log("PAYMENT");
-  console.log(`  ID:     ${payment.id}`);
-  console.log(`  Status: ${payment.status}`);
+
+  console.log("RECEIPTS");
+  console.log(
+    `  Receipts: ${receiptCount}`
+  );
 
   console.log("");
-  console.log("REAL RECEIPT");
-  console.log(`  ID:       ${receipt.id}`);
-  console.log(`  File:     ${receipt.originalFileName}`);
-  console.log(`  Size:     ${receipt.fileSize} bytes`);
-  console.log(`  Location: ${seededReceiptPath}`);
+
+  console.log("MEMBER LOGIN");
+
+  console.log(
+    `  Password: ${MEMBER_PASSWORD}`
+  );
+
+  console.log(
+    "  Phone range:"
+  );
+
+  console.log(
+    `    ${getMemberPhone(1)}`
+  );
+
+  console.log(
+    `    ${getMemberPhone(MEMBER_COUNT)}`
+  );
 
   console.log("");
+
+  console.log("MEMBER NUMBERS");
+
+  console.log("  EQB-001");
+  console.log("  EQB-002");
+  console.log("  EQB-003");
+  console.log("  ...");
+  console.log("  EQB-100");
+
+  console.log("");
+
+  console.log("RECEIPT FILES");
+
+  console.log(
+    "  seed-receipt-001.jpg"
+  );
+
+  console.log(
+    "  seed-receipt-002.jpg"
+  );
+
+  console.log(
+    "  seed-receipt-003.jpg"
+  );
+
+  console.log("  ...");
+
+  console.log(
+    "  seed-receipt-100.jpg"
+  );
+
+  console.log("");
+
   console.log("OCR");
-  console.log("  Status: NOT PROCESSED YET");
-  console.log("  Next step: Send the real image to the OCR service");
+
+  console.log(
+    "  Status: NOT PROCESSED YET"
+  );
+
+  console.log(
+    "  All 100 receipts are waiting for OCR."
+  );
 
   console.log("");
-  console.log("==============================================");
+
+  console.log(
+    "================================================"
+  );
 }
+
+// ============================================================
+// RUN
+// ============================================================
 
 main()
   .catch((error) => {
-    console.error("❌ Database seed failed:");
+    console.error(
+      "❌ Database seed failed:"
+    );
+
     console.error(error);
 
     process.exit(1);

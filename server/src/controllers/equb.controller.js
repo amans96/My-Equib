@@ -840,18 +840,14 @@ export const deleteEqub = async (req, res) => {
       });
     }
 
+    // Only the creator of the Equb can delete it.
     const equb = await prisma.equb.findUnique({
       where: {
         id,
       },
-      include: {
-        memberships: true,
-        periods: {
-          include: {
-            payments: true,
-            lotteryDraw: true,
-          },
-        },
+      select: {
+        id: true,
+        createdById: true,
       },
     });
 
@@ -862,7 +858,6 @@ export const deleteEqub = async (req, res) => {
       });
     }
 
-    // Admin can only delete Equbs they created.
     if (equb.createdById !== userId) {
       return res.status(403).json({
         success: false,
@@ -870,78 +865,33 @@ export const deleteEqub = async (req, res) => {
       });
     }
 
-    // Do not allow deleting an active Equb.
-    if (equb.status === "ACTIVE") {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Active Equbs cannot be deleted. Cancel or complete the Equb instead.",
-      });
-    }
-
-    // Never delete an Equb that already has members.
-    if (equb.memberships.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "This Equb cannot be deleted because it already has members. Cancel the Equb instead.",
-      });
-    }
-
-    // Check whether any payment exists in its periods.
-    const hasPayments = equb.periods.some(
-      (period) => period.payments && period.payments.length > 0
-    );
-
-    if (hasPayments) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "This Equb cannot be deleted because it already has payment history. Cancel the Equb instead.",
-      });
-    }
-
-    // Check whether a lottery draw exists.
-    const hasLotteryDraw = equb.periods.some(
-      (period) => period.lotteryDraw
-    );
-
-    if (hasLotteryDraw) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "This Equb cannot be deleted because it already has lottery history. Cancel the Equb instead.",
-      });
-    }
-
     /*
-     * At this point:
-     * - No members
-     * - No payments
-     * - No lottery draws
+     * Cascade deletion:
      *
-     * The Equb can safely be deleted.
+     * Deleting the Equb will also delete all dependent records:
+     * - memberships
+     * - payment periods
+     * - payments
+     * - receipts
+     * - OCR data
+     * - payment verifications
+     * - lottery data
+     * - admins
+     * - bank records
+     * - notifications
+     * etc.
      *
-     * Payment periods must be removed first because they reference
-     * the Equb.
+     * The database Prisma relations must use onDelete: Cascade.
      */
-    await prisma.$transaction(async (tx) => {
-      await tx.paymentPeriod.deleteMany({
-        where: {
-          equbId: id,
-        },
-      });
-
-      await tx.equb.delete({
-        where: {
-          id,
-        },
-      });
+    await prisma.equb.delete({
+      where: {
+        id,
+      },
     });
 
     return res.status(200).json({
       success: true,
-      message: "Equb deleted successfully.",
+      message: "Equb and all related data deleted successfully.",
     });
   } catch (error) {
     console.error("Delete Equb error:", error);
@@ -956,224 +906,362 @@ export const deleteEqub = async (req, res) => {
     });
   }
 };
+
 export const getEqubPeriods = async (req, res) => {
-try {
-const { id } = req.params;
-const userId = req.user.userId;
-const userRole = req.user.role;
+  try {
+    const { id } = req.params;
 
+    const userId = req.user?.userId;
+    const userRole = req.user?.role;
 
-// --------------------------------------------------
-// 1. Find the Equb
-// --------------------------------------------------
+    // --------------------------------------------------
+    // 1. Validate authentication
+    // --------------------------------------------------
 
-const equb = await prisma.equb.findUnique({
-  where: {
-    id,
-  },
-  select: {
-    id: true,
-    name: true,
-    contributionAmount: true,
-    frequency: true,
-    totalPeriods: true,
-    currentPeriod: true,
-    status: true,
-    currency: true,
-    startDate: true,
-    endDate: true,
-    createdById: true,
-  },
-});
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
 
-if (!equb) {
-  return res.status(404).json({
-    success: false,
-    message: "Equb not found",
-  });
-}
+    // --------------------------------------------------
+    // 2. Get Equb
+    // --------------------------------------------------
 
-// --------------------------------------------------
-// 2. Authorization
-//
-// ADMIN       -> only their own Equb
-// SUPER_ADMIN -> any Equb
-// --------------------------------------------------
-
-if (
-  userRole !== "SUPER_ADMIN" &&
-  equb.createdById !== userId
-) {
-  return res.status(403).json({
-    success: false,
-    message: "You are not authorized to view these periods",
-  });
-}
-
-// --------------------------------------------------
-// 3. Get payment periods
-// --------------------------------------------------
-
-const periods = await prisma.paymentPeriod.findMany({
-  where: {
-    equbId: id,
-  },
-  include: {
-    payments: {
+    const equb = await prisma.equb.findUnique({
+      where: {
+        id,
+      },
       select: {
         id: true,
+        name: true,
+        contributionAmount: true,
+        frequency: true,
+        totalPeriods: true,
+        currentPeriod: true,
+        status: true,
+        currency: true,
+        startDate: true,
+        endDate: true,
+        createdById: true,
+      },
+    });
+
+    if (!equb) {
+      return res.status(404).json({
+        success: false,
+        message: "Equb not found",
+      });
+    }
+
+    // --------------------------------------------------
+    // 3. Authorization
+    //
+    // ADMIN       -> only their own Equb
+    // SUPER_ADMIN -> any Equb
+    // --------------------------------------------------
+
+    if (
+      userRole !== "SUPER_ADMIN" &&
+      equb.createdById !== userId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to view these periods",
+      });
+    }
+
+    // --------------------------------------------------
+    // 4. Get payment periods
+    //
+    // IMPORTANT:
+    // We DO NOT load payments here.
+    //
+    // This gives us only the period information and
+    // lightweight lottery information.
+    // --------------------------------------------------
+
+    const periods = await prisma.paymentPeriod.findMany({
+      where: {
+        equbId: id,
+      },
+      select: {
+        id: true,
+        periodNumber: true,
+        startDate: true,
+        dueDate: true,
+        closedAt: true,
+        status: true,
+        expectedAmount: true,
+
+        lotteryDraw: {
+          select: {
+            id: true,
+            status: true,
+            drawNumber: true,
+            winnerMembershipId: true,
+            scheduledAt: true,
+            executedAt: true,
+          },
+        },
+      },
+      orderBy: {
+        periodNumber: "asc",
+      },
+    });
+
+    // --------------------------------------------------
+    // 5. No periods
+    // --------------------------------------------------
+
+    if (periods.length === 0) {
+      return res.status(200).json({
+        success: true,
+
+        equb: {
+          id: equb.id,
+          name: equb.name,
+          contributionAmount: Number(equb.contributionAmount),
+          frequency: equb.frequency,
+          totalPeriods: equb.totalPeriods,
+          currentPeriod: equb.currentPeriod,
+          status: equb.status,
+          currency: equb.currency,
+          startDate: equb.startDate,
+          endDate: equb.endDate,
+        },
+
+        summary: {
+          totalPeriods: 0,
+          openPeriods: 0,
+          upcomingPeriods: 0,
+          closedPeriods: 0,
+          totalCollected: 0,
+        },
+
+        count: 0,
+        periods: [],
+      });
+    }
+
+    // --------------------------------------------------
+    // 6. Get payment statistics
+    //
+    // IMPORTANT:
+    // We do NOT fetch individual payments.
+    //
+    // PostgreSQL calculates:
+    //
+    // - payment count
+    // - verified count
+    // - pending count
+    // - total collected
+    //
+    // GROUP BY periodId + status
+    //
+    // This is ONE database query instead of loading
+    // every payment into Node.js.
+    // --------------------------------------------------
+
+    const periodIds = periods.map((period) => period.id);
+
+    const paymentStatistics = await prisma.payment.groupBy({
+      by: ["periodId", "status"],
+
+      where: {
+        periodId: {
+          in: periodIds,
+        },
+      },
+
+      _count: {
+        _all: true,
+      },
+
+      _sum: {
         paidAmount: true,
-        status: true,
       },
-    },
-    lotteryDraw: {
-      select: {
-        id: true,
-        status: true,
-        drawNumber: true,
-        winnerMembershipId: true,
-        scheduledAt: true,
-        executedAt: true,
+    });
+
+    // --------------------------------------------------
+    // 7. Organize statistics by period
+    //
+    // Example:
+    //
+    // {
+    //   "period-id-1": {
+    //      paymentCount: 100,
+    //      verifiedPaymentCount: 98,
+    //      pendingPaymentCount: 2,
+    //      totalCollected: 294000
+    //   }
+    // }
+    // --------------------------------------------------
+
+    const statisticsByPeriod = new Map();
+
+    for (const row of paymentStatistics) {
+      if (!statisticsByPeriod.has(row.periodId)) {
+        statisticsByPeriod.set(row.periodId, {
+          paymentCount: 0,
+          verifiedPaymentCount: 0,
+          pendingPaymentCount: 0,
+          totalCollected: 0,
+        });
+      }
+
+      const statistics = statisticsByPeriod.get(row.periodId);
+
+      const count = row._count._all;
+
+      // Total number of payments
+      statistics.paymentCount += count;
+
+      // Verified payments
+      if (row.status === "VERIFIED") {
+        statistics.verifiedPaymentCount += count;
+
+        statistics.totalCollected += Number(
+          row._sum.paidAmount || 0
+        );
+      }
+
+      // Pending/review payments
+      if (
+        row.status === "PENDING" ||
+        row.status === "SUBMITTED" ||
+        row.status === "UNDER_REVIEW" ||
+        row.status === "NEEDS_REVIEW"
+      ) {
+        statistics.pendingPaymentCount += count;
+      }
+    }
+
+    // --------------------------------------------------
+    // 8. Format periods
+    // --------------------------------------------------
+
+    const formattedPeriods = periods.map((period) => {
+      const statistics =
+        statisticsByPeriod.get(period.id) || {
+          paymentCount: 0,
+          verifiedPaymentCount: 0,
+          pendingPaymentCount: 0,
+          totalCollected: 0,
+        };
+
+      const expectedAmount = Number(period.expectedAmount);
+
+      const totalCollected = statistics.totalCollected;
+
+      const collectionPercentage =
+        expectedAmount > 0
+          ? Math.min(
+              (totalCollected / expectedAmount) * 100,
+              100
+            )
+          : 0;
+
+      return {
+        id: period.id,
+        periodNumber: period.periodNumber,
+
+        startDate: period.startDate,
+        dueDate: period.dueDate,
+        closedAt: period.closedAt,
+
+        status: period.status,
+
+        expectedAmount,
+
+        paymentCount: statistics.paymentCount,
+
+        verifiedPaymentCount:
+          statistics.verifiedPaymentCount,
+
+        pendingPaymentCount:
+          statistics.pendingPaymentCount,
+
+        totalCollected,
+
+        collectionPercentage: Number(
+          collectionPercentage.toFixed(2)
+        ),
+
+        lotteryDraw: period.lotteryDraw,
+      };
+    });
+
+    // --------------------------------------------------
+    // 9. Calculate summary
+    // --------------------------------------------------
+
+    const totalPeriods = formattedPeriods.length;
+
+    const openPeriods = formattedPeriods.filter(
+      (period) => period.status === "OPEN"
+    ).length;
+
+    const upcomingPeriods = formattedPeriods.filter(
+      (period) => period.status === "UPCOMING"
+    ).length;
+
+    const closedPeriods = formattedPeriods.filter(
+      (period) =>
+        period.status === "CLOSED" ||
+        period.status === "DRAW_PENDING" ||
+        period.status === "DRAW_COMPLETED"
+    ).length;
+
+    const totalCollected = formattedPeriods.reduce(
+      (total, period) => total + period.totalCollected,
+      0
+    );
+
+    // --------------------------------------------------
+    // 10. Response
+    // --------------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+
+      equb: {
+        id: equb.id,
+        name: equb.name,
+        contributionAmount: Number(
+          equb.contributionAmount
+        ),
+        frequency: equb.frequency,
+        totalPeriods: equb.totalPeriods,
+        currentPeriod: equb.currentPeriod,
+        status: equb.status,
+        currency: equb.currency,
+        startDate: equb.startDate,
+        endDate: equb.endDate,
       },
-    },
-  },
-  orderBy: {
-    periodNumber: "asc",
-  },
-});
 
-// --------------------------------------------------
-// 4. Calculate statistics for each period
-// --------------------------------------------------
+      summary: {
+        totalPeriods,
+        openPeriods,
+        upcomingPeriods,
+        closedPeriods,
+        totalCollected,
+      },
 
-const formattedPeriods = periods.map((period) => {
-  const payments = period.payments;
+      count: formattedPeriods.length,
 
-  const paymentCount = payments.length;
+      periods: formattedPeriods,
+    });
+  } catch (error) {
+    console.error("Get Equb Periods Error:", error);
 
-  const verifiedPayments = payments.filter(
-    (payment) => payment.status === "VERIFIED"
-  );
-
-  const pendingPayments = payments.filter((payment) =>
-    [
-      "PENDING",
-      "SUBMITTED",
-      "UNDER_REVIEW",
-      "NEEDS_REVIEW",
-    ].includes(payment.status)
-  );
-
-  const totalCollected = verifiedPayments.reduce(
-    (total, payment) =>
-      total + Number(payment.paidAmount || 0),
-    0
-  );
-
-  const verifiedPaymentCount = verifiedPayments.length;
-
-  const pendingPaymentCount = pendingPayments.length;
-
-  const expectedAmount = Number(period.expectedAmount);
-
-  const collectionPercentage =
-    expectedAmount > 0
-      ? Math.min(
-          (totalCollected / expectedAmount) * 100,
-          100
-        )
-      : 0;
-
-  return {
-    id: period.id,
-    periodNumber: period.periodNumber,
-
-    startDate: period.startDate,
-    dueDate: period.dueDate,
-    closedAt: period.closedAt,
-
-    status: period.status,
-
-    expectedAmount,
-
-    paymentCount,
-    verifiedPaymentCount,
-    pendingPaymentCount,
-
-    totalCollected,
-
-    collectionPercentage: Number(
-      collectionPercentage.toFixed(2)
-    ),
-
-    lotteryDraw: period.lotteryDraw,
-  };
-});
-
-// --------------------------------------------------
-// 5. Summary statistics
-// --------------------------------------------------
-
-const totalPeriods = formattedPeriods.length;
-
-const openPeriods = formattedPeriods.filter(
-  (period) => period.status === "OPEN"
-).length;
-
-const upcomingPeriods = formattedPeriods.filter(
-  (period) => period.status === "UPCOMING"
-).length;
-
-const closedPeriods = formattedPeriods.filter(
-  (period) =>
-    period.status === "CLOSED" ||
-    period.status === "DRAW_PENDING" ||
-    period.status === "DRAW_COMPLETED"
-).length;
-
-const totalCollected = formattedPeriods.reduce(
-  (total, period) => total + period.totalCollected,
-  0
-);
-
-return res.status(200).json({
-  success: true,
-
-  equb: {
-    id: equb.id,
-    name: equb.name,
-    contributionAmount: Number(equb.contributionAmount),
-    frequency: equb.frequency,
-    totalPeriods: equb.totalPeriods,
-    currentPeriod: equb.currentPeriod,
-    status: equb.status,
-    currency: equb.currency,
-    startDate: equb.startDate,
-    endDate: equb.endDate,
-  },
-
-  summary: {
-    totalPeriods,
-    openPeriods,
-    upcomingPeriods,
-    closedPeriods,
-    totalCollected,
-  },
-
-  count: formattedPeriods.length,
-  periods: formattedPeriods,
-});
-
-
-} catch (error) {
-console.error("Get Equb Periods Error:", error);
-
-return res.status(500).json({
-  success: false,
-  message: "Failed to fetch Equb payment periods",
-});
-
-
-}
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch Equb payment periods",
+    });
+  }
 };
+
+
 

@@ -1,5 +1,5 @@
 import {
-  getOrCreateLottery,
+  getLottery as getLotteryService,
   getLotteryMembers,
   prepareLottery,
   addMemberToLottery,
@@ -19,7 +19,7 @@ export const getLottery = async (req, res) => {
   try {
     const { periodId } = req.params;
 
-    const result = await getOrCreateLottery(periodId);
+    const result = await getLotteryService(periodId);
 
     return res.status(200).json({
       success: true,
