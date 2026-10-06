@@ -14,11 +14,9 @@ const storage = multer.diskStorage({
   },
 
   filename: (req, file, cb) => {
-    const extension = path.extname(file.originalname);
-
     const filename = `receipt-${Date.now()}-${Math.round(
       Math.random() * 1e9
-    )}${extension}`;
+    )}`;
 
     cb(null, filename);
   },
@@ -27,7 +25,6 @@ const storage = multer.diskStorage({
 const fileFilter = (req, file, cb) => {
   const allowedTypes = [
     "image/jpeg",
-    "image/jpg",
     "image/png",
     "image/webp",
   ];
@@ -36,7 +33,7 @@ const fileFilter = (req, file, cb) => {
     cb(null, true);
   } else {
     cb(
-      new Error("Only JPG, JPEG, PNG, and WEBP receipt images are allowed"),
+      new Error("Only JPG, PNG, and WEBP receipt images are allowed"),
       false
     );
   }

@@ -1,10 +1,16 @@
+
 import express from "express";
 import cors from "cors";
+
 import authRoutes from "./routes/auth.routes.js";
-import membershipRoutes from "./routes/membership.routes.js"
+import membershipRoutes from "./routes/membership.routes.js";
 import equbRoutes from "./routes/equb.routes.js";
 import receiptRoutes from "./routes/receipt.routes.js";
-import lotteryRoutes from "./routes/lottery.routes.js"
+import lotteryRoutes from "./routes/lottery.routes.js";
+
+import { apiLimiter } from "./middleware/rateLimiter.js";
+import { loginLimiter } from "./middleware/loginLimiter.js";
+
 const app = express();
 
 // Middleware
@@ -18,15 +24,17 @@ app.get("/api/health", (req, res) => {
     message: "Eqlub API is running",
   });
 });
-app.use("/api/auth", authRoutes);
+
+// General rate limit for API routes
+app.use("/api", apiLimiter);
+
+// Authentication routes
+app.use("/api/auth", loginLimiter, authRoutes);
+
+// Application routes
 app.use("/api", membershipRoutes);
 app.use("/api/equbs", equbRoutes);
 app.use("/api", receiptRoutes);
 app.use("/api", lotteryRoutes);
+
 export default app;
-
-
-
-
-
-
