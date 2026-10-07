@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 const prisma = new PrismaClient();
 
 const EQUb_ID = "bcbf3905-d828-461d-aacc-1856115333ce";
-const PERIOD_ID = "fa6ea94f-808b-4619-9373-f03bf5d4646b";
+const PERIOD_ID = "672ea88d-e240-4eea-afad-85a26fb9c03f";
 
 // ============================================================
 // CONFIGURATION

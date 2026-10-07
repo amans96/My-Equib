@@ -41,8 +41,7 @@ model User {
   payouts              Payout[]
   paymentVerifications PaymentVerification[]
 
-  @@index([email])
-  @@index([phone])
+
 }
 
 // ============================================================
@@ -212,7 +211,8 @@ model Payment {
 
   @@unique([membershipId, periodId])
   @@index([userId])
-  @@index([periodId])
+@@index([email])
+@@index([periodId, status])
   @@index([status])
 }
 

@@ -1263,5 +1263,299 @@ export const getEqubPeriods = async (req, res) => {
   }
 };
 
+export const getMyEqubPeriods = async (req, res) => {
+  try {
+    const { id: equbId } = req.params;
+    const userId = req.user?.userId;
+
+    // --------------------------------------------------
+    // 1. Authentication
+    // --------------------------------------------------
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    // --------------------------------------------------
+    // 2. Check Equb exists
+    // --------------------------------------------------
+
+    const equb = await prisma.equb.findUnique({
+      where: {
+        id: equbId,
+      },
+      select: {
+        id: true,
+        name: true,
+        contributionAmount: true,
+        frequency: true,
+        totalPeriods: true,
+        currentPeriod: true,
+        status: true,
+        currency: true,
+        startDate: true,
+        endDate: true,
+      },
+    });
+
+    if (!equb) {
+      return res.status(404).json({
+        success: false,
+        message: "Equb not found",
+      });
+    }
+
+    // --------------------------------------------------
+    // 3. Find this user's membership
+    // --------------------------------------------------
+
+    const membership = await prisma.equbMembership.findUnique({
+      where: {
+        userId_equbId: {
+          userId,
+          equbId,
+        },
+      },
+      select: {
+        id: true,
+        memberNumber: true,
+        shares: true,
+        status: true,
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a member of this Equb",
+      });
+    }
+
+    // --------------------------------------------------
+    // 4. Membership must be active
+    // --------------------------------------------------
+
+    if (membership.status !== "ACTIVE") {
+      return res.status(403).json({
+        success: false,
+        message: "Your Equb membership is not active",
+      });
+    }
+
+    // --------------------------------------------------
+    // 5. Get all periods + this member's payment
+    // --------------------------------------------------
+
+    const periods = await prisma.paymentPeriod.findMany({
+      where: {
+        equbId,
+      },
+
+      select: {
+        id: true,
+        periodNumber: true,
+        startDate: true,
+        dueDate: true,
+        closedAt: true,
+        status: true,
+        expectedAmount: true,
+
+        payments: {
+          where: {
+            membershipId: membership.id,
+          },
+
+          select: {
+            id: true,
+            expectedAmount: true,
+            paidAmount: true,
+            status: true,
+            paymentDate: true,
+            referenceNumber: true,
+            notes: true,
+
+            receipts: {
+              select: {
+                id: true,
+                status: true,
+                ocrProcessed: true,
+                uploadedAt: true,
+                imageUrl: true,
+                originalFileName: true,
+              },
+
+              orderBy: {
+                uploadedAt: "desc",
+              },
+
+              take: 1,
+            },
+          },
+
+          take: 1,
+        },
+      },
+
+      orderBy: {
+        periodNumber: "asc",
+      },
+    });
+
+    // --------------------------------------------------
+    // 6. Format periods for mobile
+    // --------------------------------------------------
+
+    const formattedPeriods = periods.map((period) => {
+      const payment = period.payments[0] || null;
+      const receipt = payment?.receipts?.[0] || null;
+
+      let paymentStatus = "NOT_PAID";
+
+      if (payment) {
+        paymentStatus = payment.status;
+      }
+
+      return {
+        id: period.id,
+        periodNumber: period.periodNumber,
+
+        startDate: period.startDate,
+        dueDate: period.dueDate,
+        closedAt: period.closedAt,
+
+        status: period.status,
+
+        expectedAmount: Number(period.expectedAmount),
+
+        payment: payment
+          ? {
+              id: payment.id,
+
+              expectedAmount: Number(
+                payment.expectedAmount
+              ),
+
+              paidAmount: payment.paidAmount
+                ? Number(payment.paidAmount)
+                : null,
+
+              status: payment.status,
+
+              paymentDate: payment.paymentDate,
+
+              referenceNumber:
+                payment.referenceNumber,
+
+              notes: payment.notes,
+
+              receipt: receipt
+                ? {
+                    id: receipt.id,
+                    status: receipt.status,
+                    ocrProcessed:
+                      receipt.ocrProcessed,
+                    uploadedAt: receipt.uploadedAt,
+                    imageUrl: receipt.imageUrl,
+                    originalFileName:
+                      receipt.originalFileName,
+                  }
+                : null,
+            }
+          : null,
+
+        paymentStatus,
+
+        canUploadReceipt:
+          !payment ||
+          payment.status === "REJECTED" ||
+          payment.status === "NEEDS_REVIEW",
+      };
+    });
+
+    // --------------------------------------------------
+    // 7. Summary
+    // --------------------------------------------------
+
+    const paidPeriods = formattedPeriods.filter(
+      (period) =>
+        period.paymentStatus === "VERIFIED"
+    ).length;
+
+    const pendingPeriods = formattedPeriods.filter(
+      (period) =>
+        period.paymentStatus === "PENDING" ||
+        period.paymentStatus === "SUBMITTED" ||
+        period.paymentStatus === "UNDER_REVIEW" ||
+        period.paymentStatus === "NEEDS_REVIEW"
+    ).length;
+
+    const unpaidPeriods = formattedPeriods.filter(
+      (period) =>
+        period.paymentStatus === "NOT_PAID"
+    ).length;
+
+    const rejectedPeriods = formattedPeriods.filter(
+      (period) =>
+        period.paymentStatus === "REJECTED"
+    ).length;
+
+    // --------------------------------------------------
+    // 8. Response
+    // --------------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+
+      equb: {
+        id: equb.id,
+        name: equb.name,
+        contributionAmount: Number(
+          equb.contributionAmount
+        ),
+        frequency: equb.frequency,
+        totalPeriods: equb.totalPeriods,
+        currentPeriod: equb.currentPeriod,
+        status: equb.status,
+        currency: equb.currency,
+        startDate: equb.startDate,
+        endDate: equb.endDate,
+      },
+
+      membership: {
+        id: membership.id,
+        memberNumber: membership.memberNumber,
+        shares: Number(membership.shares),
+        status: membership.status,
+      },
+
+      summary: {
+        totalPeriods: formattedPeriods.length,
+        paidPeriods,
+        pendingPeriods,
+        unpaidPeriods,
+        rejectedPeriods,
+      },
+
+      periods: formattedPeriods,
+    });
+  } catch (error) {
+    console.error(
+      "Get My Equb Periods Error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to fetch your Equb payment periods",
+    });
+  }
+};
+
+
+
 
 

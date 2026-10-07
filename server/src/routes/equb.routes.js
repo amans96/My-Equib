@@ -7,6 +7,7 @@ getEqubById,
 getEqubPeriods,
 updateEqub,
 deleteEqub,
+getMyEqubPeriods
 } from "../controllers/equb.controller.js";
 
 import { protect } from "../middleware/auth.middleware.js";
@@ -51,6 +52,11 @@ const router = express.Router();
   protect,
   getEqubPeriods
   );
+  router.get(
+  "/:id/my-periods",
+  protect,
+  getMyEqubPeriods
+);
 
 /*
 

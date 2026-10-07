@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Clock3,
   Upload,
+  XCircle,
 } from "lucide-react-native";
 
 import {
@@ -50,6 +51,24 @@ type Membership = {
   };
 };
 
+type Receipt = {
+  id: string;
+  status: string;
+  ocrProcessed: boolean;
+  createdAt: string;
+};
+
+type Payment = {
+  id: string;
+  paidAmount: string | number;
+  status: string;
+  paidAt?: string | null;
+  verifiedAt?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+  receipt?: Receipt | null;
+};
+
 type PaymentPeriod = {
   id: string;
   periodNumber: number;
@@ -58,6 +77,10 @@ type PaymentPeriod = {
   closedAt?: string | null;
   status: string;
   expectedAmount: string | number;
+
+  payment: Payment | null;
+  paymentStatus: string;
+  canUploadReceipt: boolean;
 };
 
 type ReceiptState = {
@@ -78,6 +101,9 @@ export default function PaymentsScreen() {
 
   const [selectedReceipt, setSelectedReceipt] =
     useState<ReceiptState | null>(null);
+
+  const [selectedPeriodId, setSelectedPeriodId] =
+    useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,12 +126,17 @@ export default function PaymentsScreen() {
       ] = await Promise.all([
         getEqubs(),
         getMyMemberships(),
-        apiRequest<{ periods: PaymentPeriod[] }>(
-          `/equbs/${id}/periods`
-        ),
+
+        // IMPORTANT:
+        // This is the member-specific endpoint.
+        apiRequest<{
+          periods: PaymentPeriod[];
+        }>(`/equbs/${id}/my-periods`),
       ]);
 
-      const foundEqub = (equbResponse.equbs || []).find(
+      const foundEqub = (
+        equbResponse.equbs || []
+      ).find(
         (item: Equb) => item.id === id
       );
 
@@ -133,7 +164,6 @@ export default function PaymentsScreen() {
 
       setEqub(foundEqub);
       setMembership(foundMembership);
-
       setPeriods(periodsResponse.periods || []);
     } catch (error) {
       if (error instanceof Error) {
@@ -157,9 +187,21 @@ export default function PaymentsScreen() {
     setRefreshing(true);
     loadPaymentData();
   };
+  
+const handleBack = () => {
+  if (router.canGoBack()) {
+    router.back();
+  } else {
+    router.replace("/(member)/equbs");
+  }
+};
 
-  const pickReceipt = async () => {
+
+
+  const pickReceipt = async (periodId: string) => {
     try {
+      setSelectedPeriodId(periodId);
+
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -179,6 +221,7 @@ export default function PaymentsScreen() {
         });
 
       if (result.canceled) {
+        setSelectedPeriodId(null);
         return;
       }
 
@@ -192,6 +235,8 @@ export default function PaymentsScreen() {
         type: asset.mimeType || "image/jpeg",
       });
     } catch {
+      setSelectedPeriodId(null);
+
       Alert.alert(
         "Error",
         "Could not select the receipt image."
@@ -199,8 +244,12 @@ export default function PaymentsScreen() {
     }
   };
 
-  const takeReceiptPhoto = async () => {
+  const takeReceiptPhoto = async (
+    periodId: string
+  ) => {
     try {
+      setSelectedPeriodId(periodId);
+
       const permission =
         await ImagePicker.requestCameraPermissionsAsync();
 
@@ -219,6 +268,7 @@ export default function PaymentsScreen() {
         });
 
       if (result.canceled) {
+        setSelectedPeriodId(null);
         return;
       }
 
@@ -232,6 +282,8 @@ export default function PaymentsScreen() {
         type: asset.mimeType || "image/jpeg",
       });
     } catch {
+      setSelectedPeriodId(null);
+
       Alert.alert(
         "Error",
         "Could not take the receipt photo."
@@ -272,10 +324,11 @@ export default function PaymentsScreen() {
       );
 
       setSelectedReceipt(null);
+      setSelectedPeriodId(null);
 
       Alert.alert(
         "Receipt submitted",
-        "Your payment receipt has been uploaded successfully. It will now be processed and verified."
+        "Your payment receipt has been uploaded successfully. It is now waiting for verification."
       );
 
       await loadPaymentData();
@@ -334,6 +387,9 @@ export default function PaymentsScreen() {
     );
   }
 
+  /*
+   * Find the current OPEN period.
+   */
   const openPeriods = periods.filter(
     (period) => period.status === "OPEN"
   );
@@ -341,7 +397,8 @@ export default function PaymentsScreen() {
   const currentPeriod =
     openPeriods.find(
       (period) =>
-        period.periodNumber === equb.currentPeriod
+        period.periodNumber ===
+        equb.currentPeriod
     ) ||
     openPeriods[0] ||
     null;
@@ -369,6 +426,60 @@ export default function PaymentsScreen() {
       year: "numeric",
     });
 
+  const getPaymentStatusLabel = (
+    period: PaymentPeriod
+  ) => {
+    switch (period.paymentStatus) {
+      case "VERIFIED":
+        return "PAID";
+
+      case "PENDING":
+      case "SUBMITTED":
+      case "UNDER_REVIEW":
+      case "NEEDS_REVIEW":
+        return "PENDING";
+
+      case "REJECTED":
+        return "REJECTED";
+
+      default:
+        return "NOT PAID";
+    }
+  };
+
+  const getPaymentStatusClasses = (
+    period: PaymentPeriod
+  ) => {
+    switch (period.paymentStatus) {
+      case "VERIFIED":
+        return {
+          container: "bg-emerald-50",
+          text: "text-emerald-700",
+        };
+
+      case "PENDING":
+      case "SUBMITTED":
+      case "UNDER_REVIEW":
+      case "NEEDS_REVIEW":
+        return {
+          container: "bg-amber-50",
+          text: "text-amber-700",
+        };
+
+      case "REJECTED":
+        return {
+          container: "bg-red-50",
+          text: "text-red-700",
+        };
+
+      default:
+        return {
+          container: "bg-slate-100",
+          text: "text-slate-500",
+        };
+    }
+  };
+
   return (
     <View className="flex-1 bg-slate-50">
       <ScrollView
@@ -384,11 +495,12 @@ export default function PaymentsScreen() {
         }}
       >
         {/* Header */}
+
         <View className="px-5 pb-5 pt-14">
-          <Pressable
-            onPress={() => router.back()}
-            className="mb-6 h-10 w-10 items-center justify-center rounded-full bg-white"
-          >
+         <Pressable 
+  onPress={handleBack}
+  className="mb-6 h-10 w-10 items-center justify-center rounded-full bg-white"
+>
             <ArrowLeft
               size={22}
               color="#0f172a"
@@ -404,12 +516,13 @@ export default function PaymentsScreen() {
           </Text>
 
           <Text className="mt-2 text-sm leading-6 text-slate-500">
-            Make your contribution by uploading your
-            payment receipt.
+            Track your contributions and submit
+            payment receipts.
           </Text>
         </View>
 
         {/* Error */}
+
         {errorMessage ? (
           <View className="mx-5 mb-5 rounded-2xl border border-red-200 bg-red-50 p-4">
             <Text className="text-sm font-medium leading-5 text-red-600">
@@ -419,6 +532,7 @@ export default function PaymentsScreen() {
         ) : null}
 
         {/* Current Payment */}
+
         {currentPeriod ? (
           <View className="mx-5 rounded-3xl bg-slate-900 p-6">
             <View className="flex-row items-center justify-between">
@@ -466,6 +580,63 @@ export default function PaymentsScreen() {
                 </Text>
               </View>
             </View>
+
+            {/* Current payment status */}
+
+            <View className="mt-6 border-t border-slate-700 pt-5">
+              {currentPeriod.paymentStatus ===
+              "VERIFIED" ? (
+                <View className="flex-row items-center">
+                  <CheckCircle2
+                    size={18}
+                    color="#34d399"
+                  />
+
+                  <Text className="ml-2 font-semibold text-emerald-300">
+                    Payment verified
+                  </Text>
+                </View>
+              ) : currentPeriod.paymentStatus ===
+                "REJECTED" ? (
+                <View>
+                  <View className="flex-row items-center">
+                    <XCircle
+                      size={18}
+                      color="#f87171"
+                    />
+
+                    <Text className="ml-2 font-semibold text-red-300">
+                      Payment rejected
+                    </Text>
+                  </View>
+
+                  {currentPeriod.payment
+                    ?.rejectionReason ? (
+                    <Text className="mt-2 text-xs leading-5 text-slate-400">
+                      {
+                        currentPeriod.payment
+                          .rejectionReason
+                      }
+                    </Text>
+                  ) : null}
+                </View>
+              ) : currentPeriod.payment ? (
+                <View className="flex-row items-center">
+                  <Clock3
+                    size={18}
+                    color="#fbbf24"
+                  />
+
+                  <Text className="ml-2 font-semibold text-amber-300">
+                    Payment pending verification
+                  </Text>
+                </View>
+              ) : (
+                <Text className="font-semibold text-slate-300">
+                  Payment not submitted
+                </Text>
+              )}
+            </View>
           </View>
         ) : (
           <View className="mx-5 rounded-3xl bg-white p-6">
@@ -479,14 +650,16 @@ export default function PaymentsScreen() {
             </Text>
 
             <Text className="mt-2 text-sm leading-6 text-slate-500">
-              There is currently no payment period open
-              for this Equb.
+              There is currently no payment period
+              open for this Equb.
             </Text>
           </View>
         )}
 
         {/* Receipt Upload */}
-        {currentPeriod ? (
+
+        {currentPeriod &&
+        currentPeriod.canUploadReceipt ? (
           <View className="mx-5 mt-6 rounded-3xl bg-white p-5">
             <View className="flex-row items-center">
               <View className="h-11 w-11 items-center justify-center rounded-2xl bg-slate-100">
@@ -526,9 +699,10 @@ export default function PaymentsScreen() {
                   </Text>
 
                   <Pressable
-                    onPress={() =>
-                      setSelectedReceipt(null)
-                    }
+                    onPress={() => {
+                      setSelectedReceipt(null);
+                      setSelectedPeriodId(null);
+                    }}
                     className="mt-3"
                   >
                     <Text className="text-sm font-semibold text-red-600">
@@ -541,7 +715,9 @@ export default function PaymentsScreen() {
 
             <View className="mt-5 flex-row">
               <Pressable
-                onPress={pickReceipt}
+                onPress={() =>
+                  pickReceipt(currentPeriod.id)
+                }
                 disabled={uploading}
                 className="mr-2 flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 py-4"
               >
@@ -551,7 +727,11 @@ export default function PaymentsScreen() {
               </Pressable>
 
               <Pressable
-                onPress={takeReceiptPhoto}
+                onPress={() =>
+                  takeReceiptPhoto(
+                    currentPeriod.id
+                  )
+                }
                 disabled={uploading}
                 className="ml-2 flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 py-4"
               >
@@ -566,10 +746,16 @@ export default function PaymentsScreen() {
                 uploadReceipt(currentPeriod.id)
               }
               disabled={
-                uploading || !selectedReceipt
+                uploading ||
+                !selectedReceipt ||
+                selectedPeriodId !==
+                  currentPeriod.id
               }
               className={`mt-4 items-center justify-center rounded-2xl bg-slate-900 py-4 ${
-                uploading || !selectedReceipt
+                uploading ||
+                !selectedReceipt ||
+                selectedPeriodId !==
+                  currentPeriod.id
                   ? "opacity-40"
                   : ""
               }`}
@@ -585,16 +771,55 @@ export default function PaymentsScreen() {
 
             <View className="mt-4 rounded-2xl bg-amber-50 p-4">
               <Text className="text-xs leading-5 text-amber-700">
-                Make sure the receipt clearly shows the
-                transaction amount, date, sender and
-                transaction reference. The system will
-                process the receipt automatically.
+                Make sure the receipt clearly shows
+                the transaction amount, date, sender
+                and transaction reference. The
+                receipt will be reviewed before your
+                payment is marked as verified.
               </Text>
             </View>
+          </View>
+        ) : currentPeriod?.paymentStatus ===
+          "VERIFIED" ? (
+          <View className="mx-5 mt-6 rounded-3xl bg-emerald-50 p-5">
+            <View className="flex-row items-center">
+              <CheckCircle2
+                size={22}
+                color="#16a34a"
+              />
+
+              <Text className="ml-3 font-bold text-emerald-800">
+                Payment verified
+              </Text>
+            </View>
+
+            <Text className="mt-2 text-sm leading-5 text-emerald-700">
+              Your payment for this period has been
+              approved by the Equb administrator.
+            </Text>
+          </View>
+        ) : currentPeriod?.payment ? (
+          <View className="mx-5 mt-6 rounded-3xl bg-amber-50 p-5">
+            <View className="flex-row items-center">
+              <Clock3
+                size={22}
+                color="#d97706"
+              />
+
+              <Text className="ml-3 font-bold text-amber-800">
+                Payment under review
+              </Text>
+            </View>
+
+            <Text className="mt-2 text-sm leading-5 text-amber-700">
+              Your receipt has been submitted and is
+              waiting for administrator verification.
+            </Text>
           </View>
         ) : null}
 
         {/* Payment Periods */}
+
         <View className="mt-8 px-5">
           <Text className="text-xl font-bold text-slate-900">
             Payment Periods
@@ -617,7 +842,13 @@ export default function PaymentsScreen() {
                   period.status === "OPEN";
 
                 const isCurrent =
-                  period.id === currentPeriod?.id;
+                  period.id ===
+                  currentPeriod?.id;
+
+                const statusClasses =
+                  getPaymentStatusClasses(
+                    period
+                  );
 
                 return (
                   <View
@@ -634,7 +865,8 @@ export default function PaymentsScreen() {
 
                       <View className="ml-3 flex-1">
                         <Text className="font-bold text-slate-900">
-                          Period {period.periodNumber}
+                          Period{" "}
+                          {period.periodNumber}
                         </Text>
 
                         <Text className="mt-1 text-xs text-slate-500">
@@ -649,20 +881,14 @@ export default function PaymentsScreen() {
                       </View>
 
                       <View
-                        className={`rounded-full px-3 py-1 ${
-                          isOpen
-                            ? "bg-emerald-50"
-                            : "bg-slate-100"
-                        }`}
+                        className={`rounded-full px-3 py-1 ${statusClasses.container}`}
                       >
                         <Text
-                          className={`text-xs font-bold ${
-                            isOpen
-                              ? "text-emerald-700"
-                              : "text-slate-500"
-                          }`}
+                          className={`text-xs font-bold ${statusClasses.text}`}
                         >
-                          {period.status}
+                          {getPaymentStatusLabel(
+                            period
+                          )}
                         </Text>
                       </View>
                     </View>
@@ -679,6 +905,50 @@ export default function PaymentsScreen() {
                       </Text>
                     </View>
 
+                    {period.paymentStatus ===
+                    "VERIFIED" ? (
+                      <View className="mt-3 flex-row items-center">
+                        <CheckCircle2
+                          size={15}
+                          color="#16a34a"
+                        />
+
+                        <Text className="ml-2 text-xs font-semibold text-green-600">
+                          Payment verified
+                        </Text>
+                      </View>
+                    ) : period.paymentStatus ===
+                      "REJECTED" ? (
+                      <View className="mt-3 flex-row items-center">
+                        <XCircle
+                          size={15}
+                          color="#dc2626"
+                        />
+
+                        <Text className="ml-2 text-xs font-semibold text-red-600">
+                          Receipt rejected — upload
+                          a new receipt
+                        </Text>
+                      </View>
+                    ) : period.payment ? (
+                      <View className="mt-3 flex-row items-center">
+                        <Clock3
+                          size={15}
+                          color="#d97706"
+                        />
+
+                        <Text className="ml-2 text-xs font-semibold text-amber-600">
+                          Waiting for verification
+                        </Text>
+                      </View>
+                    ) : period.canUploadReceipt ? (
+                      <View className="mt-3">
+                        <Text className="text-xs font-semibold text-slate-500">
+                          Payment not submitted
+                        </Text>
+                      </View>
+                    ) : null}
+
                     {isCurrent ? (
                       <View className="mt-3 flex-row items-center">
                         <CheckCircle2
@@ -690,6 +960,61 @@ export default function PaymentsScreen() {
                           Current payment period
                         </Text>
                       </View>
+                    ) : null}
+
+                    {isOpen &&
+                    period.paymentStatus !==
+                      "VERIFIED" &&
+                    period.canUploadReceipt ? (
+                      <Pressable
+                        onPress={() => {
+                          setSelectedPeriodId(
+                            period.id
+                          );
+
+                          if (
+                            selectedReceipt
+                          ) {
+                            Alert.alert(
+                              "Receipt selected",
+                              "Your selected receipt is ready to submit for this period."
+                            );
+                          } else {
+                            Alert.alert(
+                              "Upload receipt",
+                              "Choose how you want to provide your payment receipt.",
+                              [
+                                {
+                                  text: "Choose Photo",
+                                  onPress: () =>
+                                    pickReceipt(
+                                      period.id
+                                    ),
+                                },
+                                {
+                                  text: "Take Photo",
+                                  onPress: () =>
+                                    takeReceiptPhoto(
+                                      period.id
+                                    ),
+                                },
+                                {
+                                  text: "Cancel",
+                                  style: "cancel",
+                                },
+                              ]
+                            );
+                          }
+                        }}
+                        className="mt-4 items-center justify-center rounded-2xl bg-slate-900 py-3"
+                      >
+                        <Text className="font-bold text-white">
+                          {period.paymentStatus ===
+                          "REJECTED"
+                            ? "Upload New Receipt"
+                            : "Upload Receipt"}
+                        </Text>
+                      </Pressable>
                     ) : null}
                   </View>
                 );

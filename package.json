@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "express-rate-limit": "^8.7.1",
+    "file-type": "^22.1.1"
+  }
+}
