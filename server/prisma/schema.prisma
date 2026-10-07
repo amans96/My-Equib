@@ -149,6 +149,7 @@ model EqubAdmin {
 // PAYMENT PERIOD
 // ============================================================
 
+
 model PaymentPeriod {
   id String @id @default(uuid())
 
@@ -167,7 +168,7 @@ model PaymentPeriod {
   expectedAmount Decimal @db.Decimal(12, 2)
 
   // Relations
-  payments    Payment[]
+  allocations PaymentAllocation[]
   lotteryDraw LotteryDraw?
 
   createdAt DateTime @default(now())
@@ -178,21 +179,44 @@ model PaymentPeriod {
   @@index([status])
 }
 
+
 // ============================================================
 // PAYMENT
 // ============================================================
+
+
+model PaymentAllocation {
+  id String @id @default(uuid())
+
+  paymentId String
+  periodId  String
+
+  payment Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  period  PaymentPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  // Amount from this payment assigned to this period
+  amount Decimal @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+
+  // A payment cannot allocate to the same period twice
+  @@unique([paymentId, periodId])
+
+  @@index([paymentId])
+  @@index([periodId])
+}
+
 
 model Payment {
   id String @id @default(uuid())
 
   membershipId String
-  periodId     String
   userId       String
 
   membership EqubMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
-  period     PaymentPeriod  @relation(fields: [periodId], references: [id], onDelete: Cascade)
   user       User           @relation(fields: [userId], references: [id])
 
+  // The total amount sent in this bank transaction
   expectedAmount Decimal  @db.Decimal(12, 2)
   paidAmount     Decimal? @db.Decimal(12, 2)
 
@@ -206,15 +230,15 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   // Relations
+  allocations   PaymentAllocation[]
   receipts      Receipt[]
   verifications PaymentVerification[]
 
-  @@unique([membershipId, periodId])
+  @@index([membershipId])
   @@index([userId])
-@@index([email])
-@@index([periodId, status])
   @@index([status])
 }
+
 
 // ============================================================
 // RECEIPT
