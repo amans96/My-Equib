@@ -1,9 +1,14 @@
-import prisma from "../config/database.js";
 
+import prisma from "../config/database.js";
 import path from "path";
 import fs from "fs";
 
 import { processReceiptOCR } from "../services/ocr.service.js";
+
+// ============================================================
+// UPLOAD RECEIPT
+// POST /api/payment-periods/:periodId/receipts
+// ============================================================
 
 export const uploadReceipt = async (req, res) => {
   try {
@@ -73,18 +78,31 @@ export const uploadReceipt = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 5. Check if a payment already exists
+    // 5. Check whether this period already has a payment
+    //
+    // Payment no longer contains periodId.
+    // We find the payment through PaymentAllocation.
     // --------------------------------------------------
 
-    const existingPayment = await prisma.payment.findUnique({
+    const existingPayment = await prisma.payment.findFirst({
       where: {
-        membershipId_periodId: {
-          membershipId: membership.id,
-          periodId: period.id,
+        membershipId: membership.id,
+
+        allocations: {
+          some: {
+            periodId: period.id,
+          },
         },
       },
+
       include: {
         receipts: true,
+
+        allocations: {
+          include: {
+            period: true,
+          },
+        },
       },
     });
 
@@ -103,21 +121,30 @@ export const uploadReceipt = async (req, res) => {
     // --------------------------------------------------
 
     const expectedAmount =
-      Number(period.equb.contributionAmount) * Number(membership.shares);
+      Number(period.equb.contributionAmount) *
+      Number(membership.shares);
 
     // --------------------------------------------------
-    // 7. Create Payment + Receipt
+    // 7. Create Payment + PaymentAllocation + Receipt
     // --------------------------------------------------
 
     const payment = await prisma.payment.create({
       data: {
         membershipId: membership.id,
-        periodId: period.id,
         userId,
 
         expectedAmount,
 
         status: "PENDING",
+
+        // The payment belongs to this period through
+        // PaymentAllocation.
+        allocations: {
+          create: {
+            periodId: period.id,
+            amount: expectedAmount,
+          },
+        },
 
         receipts: {
           create: {
@@ -137,7 +164,13 @@ export const uploadReceipt = async (req, res) => {
 
       include: {
         receipts: true,
-        period: true,
+
+        allocations: {
+          include: {
+            period: true,
+          },
+        },
+
         membership: true,
       },
     });
@@ -154,10 +187,6 @@ export const uploadReceipt = async (req, res) => {
   } catch (error) {
     console.error("Upload receipt error:", error);
 
-    // If something failed after multer saved the file,
-    // the file can be cleaned up later. For now we return
-    // the actual server error.
-
     return res.status(500).json({
       success: false,
       message: "Failed to upload receipt",
@@ -165,341 +194,427 @@ export const uploadReceipt = async (req, res) => {
     });
   }
 };
+
+// ============================================================
+// GET PAYMENT PERIOD DETAILS
+// GET /api/payment-periods/:periodId
+// ============================================================
+
 export const getPaymentPeriodDetails = async (req, res) => {
-try {
-const { periodId } = req.params;
-const userId = req.user.userId;
-const userRole = req.user.role;
+  try {
+    const { periodId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
 
+    // --------------------------------------------------
+    // 1. Find the payment period
+    // --------------------------------------------------
 
-// --------------------------------------------------
-// 1. Find the payment period
-// --------------------------------------------------
-
-const period = await prisma.paymentPeriod.findUnique({
-  where: {
-    id: periodId,
-  },
-  include: {
-    equb: {
-      select: {
-        id: true,
-        name: true,
-        contributionAmount: true,
-        frequency: true,
-        currency: true,
-        createdById: true,
-        status: true,
-      },
-    },
-  },
-});
-
-if (!period) {
-  return res.status(404).json({
-    success: false,
-    message: "Payment period not found",
-  });
-}
-
-// --------------------------------------------------
-// 2. Check admin authorization
-// --------------------------------------------------
-
-if (
-  userRole !== "SUPER_ADMIN" &&
-  period.equb.createdById !== userId
-) {
-  return res.status(403).json({
-    success: false,
-    message:
-      "You are not authorized to view this payment period",
-  });
-}
-
-// --------------------------------------------------
-// 3. Get all active members of the Equb
-// --------------------------------------------------
-
-const memberships = await prisma.equbMembership.findMany({
-  where: {
-    equbId: period.equbId,
-    status: "ACTIVE",
-  },
-  include: {
-    user: {
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        profileImage: true,
-      },
-    },
-    payments: {
+    const period = await prisma.paymentPeriod.findUnique({
       where: {
-        periodId,
+        id: periodId,
       },
+
       include: {
-        receipts: {
-          include: {
-            ocrData: true,
-          },
-          orderBy: {
-            uploadedAt: "desc",
+        equb: {
+          select: {
+            id: true,
+            name: true,
+            contributionAmount: true,
+            frequency: true,
+            currency: true,
+            createdById: true,
+            status: true,
           },
         },
-        verifications: {
-          include: {
-            reviewer: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
+      },
+    });
+
+    if (!period) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment period not found",
+      });
+    }
+
+    // --------------------------------------------------
+    // 2. Check admin authorization
+    // --------------------------------------------------
+
+    if (
+      userRole !== "SUPER_ADMIN" &&
+      period.equb.createdById !== userId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to view this payment period",
+      });
+    }
+
+    // --------------------------------------------------
+    // 3. Get all active members of the Equb
+    //
+    // Payments are now found through PaymentAllocation.
+    // --------------------------------------------------
+
+    const memberships = await prisma.equbMembership.findMany({
+      where: {
+        equbId: period.equbId,
+        status: "ACTIVE",
+      },
+
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            profileImage: true,
+          },
+        },
+
+        payments: {
+          where: {
+            allocations: {
+              some: {
+                periodId,
               },
             },
           },
-          orderBy: {
-            verifiedAt: "desc",
+
+          include: {
+            allocations: {
+              where: {
+                periodId,
+              },
+            },
+
+            receipts: {
+              include: {
+                ocrData: true,
+              },
+
+              orderBy: {
+                uploadedAt: "desc",
+              },
+            },
+
+            verifications: {
+              include: {
+                reviewer: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+
+              orderBy: {
+                verifiedAt: "desc",
+              },
+            },
           },
         },
       },
-    },
-  },
-  orderBy: {
-    createdAt: "asc",
-  },
-});
 
-// --------------------------------------------------
-// 4. Format members and payment information
-// --------------------------------------------------
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
 
-const members = memberships.map((membership) => {
-  const payment = membership.payments[0] || null;
+    // --------------------------------------------------
+    // 4. Format members and payment information
+    // --------------------------------------------------
 
-  const receipt = payment?.receipts?.[0] || null;
+    const members = memberships.map((membership) => {
+      const payment = membership.payments[0] || null;
 
-  const verification =
-    payment?.verifications?.[0] || null;
+      const allocation = payment?.allocations?.[0] || null;
 
-  const expectedAmount =
-    Number(period.equb.contributionAmount) *
-    Number(membership.shares);
+      const receipt = payment?.receipts?.[0] || null;
 
-  return {
-    membership: {
-      id: membership.id,
-      shares: Number(membership.shares),
-      status: membership.status,
-      memberNumber: membership.memberNumber,
-    },
+      const verification =
+        payment?.verifications?.[0] || null;
 
-    user: membership.user,
+      const expectedAmount =
+        Number(period.equb.contributionAmount) *
+        Number(membership.shares);
 
-    expectedAmount,
+      return {
+        membership: {
+          id: membership.id,
+          shares: Number(membership.shares),
+          status: membership.status,
+          memberNumber: membership.memberNumber,
+        },
 
-    payment: payment
-      ? {
-          id: payment.id,
-          expectedAmount: Number(
-            payment.expectedAmount
+        user: membership.user,
+
+        expectedAmount,
+
+        payment: payment
+          ? {
+              id: payment.id,
+
+              expectedAmount: Number(
+                payment.expectedAmount
+              ),
+
+              // Amount allocated specifically to this period.
+              allocatedAmount: allocation
+                ? Number(allocation.amount)
+                : null,
+
+              // Total amount of the bank transaction.
+              paidAmount:
+                payment.paidAmount !== null
+                  ? Number(payment.paidAmount)
+                  : null,
+
+              status: payment.status,
+
+              paymentDate: payment.paymentDate,
+
+              referenceNumber:
+                payment.referenceNumber,
+
+              notes: payment.notes,
+
+              createdAt: payment.createdAt,
+
+              updatedAt: payment.updatedAt,
+            }
+          : null,
+
+        receipt: receipt
+          ? {
+              id: receipt.id,
+
+              imageUrl: receipt.imageUrl,
+
+              storageKey: receipt.storageKey,
+
+              originalFileName:
+                receipt.originalFileName,
+
+              mimeType: receipt.mimeType,
+
+              fileSize: receipt.fileSize,
+
+              status: receipt.status,
+
+              ocrProcessed: receipt.ocrProcessed,
+
+              uploadedAt: receipt.uploadedAt,
+
+              updatedAt: receipt.updatedAt,
+
+              ocrData: receipt.ocrData
+                ? {
+                    id: receipt.ocrData.id,
+
+                    transactionReference:
+                      receipt.ocrData.transactionReference,
+
+                    senderName:
+                      receipt.ocrData.senderName,
+
+                    senderAccount:
+                      receipt.ocrData.senderAccount,
+
+                    receiverName:
+                      receipt.ocrData.receiverName,
+
+                    receiverAccount:
+                      receipt.ocrData.receiverAccount,
+
+                    amount:
+                      receipt.ocrData.amount !== null
+                        ? Number(
+                            receipt.ocrData.amount
+                          )
+                        : null,
+
+                    transactionDate:
+                      receipt.ocrData.transactionDate,
+
+                    bankName:
+                      receipt.ocrData.bankName,
+
+                    rawText:
+                      receipt.ocrData.rawText,
+
+                    confidence:
+                      receipt.ocrData.confidence !== null
+                        ? Number(
+                            receipt.ocrData.confidence
+                          )
+                        : null,
+
+                    processedAt:
+                      receipt.ocrData.processedAt,
+                  }
+                : null,
+            }
+          : null,
+
+        verification: verification
+          ? {
+              id: verification.id,
+
+              decision:
+                verification.decision,
+
+              reason:
+                verification.reason,
+
+              verifiedAmount:
+                verification.verifiedAmount !== null
+                  ? Number(
+                      verification.verifiedAmount
+                    )
+                  : null,
+
+              verifiedAt:
+                verification.verifiedAt,
+
+              reviewer:
+                verification.reviewer,
+            }
+          : null,
+      };
+    });
+
+    // --------------------------------------------------
+    // 5. Calculate summary
+    // --------------------------------------------------
+
+    const totalMembers = members.length;
+
+    const paidMembers = members.filter(
+      (member) => member.payment !== null
+    ).length;
+
+    const verifiedMembers = members.filter(
+      (member) =>
+        member.payment?.status === "VERIFIED"
+    ).length;
+
+    const pendingMembers = members.filter(
+      (member) =>
+        member.payment &&
+        [
+          "PENDING",
+          "SUBMITTED",
+          "UNDER_REVIEW",
+          "NEEDS_REVIEW",
+        ].includes(member.payment.status)
+    ).length;
+
+    const rejectedMembers = members.filter(
+      (member) =>
+        member.payment?.status === "REJECTED"
+    ).length;
+
+    const missingMembers = members.filter(
+      (member) => member.payment === null
+    ).length;
+
+    const totalExpected = members.reduce(
+      (total, member) =>
+        total + member.expectedAmount,
+      0
+    );
+
+    const totalPaid = members.reduce(
+      (total, member) =>
+        total +
+        Number(member.payment?.paidAmount || 0),
+      0
+    );
+
+    // --------------------------------------------------
+    // 6. Return response
+    // --------------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+
+      period: {
+        id: period.id,
+
+        periodNumber:
+          period.periodNumber,
+
+        startDate:
+          period.startDate,
+
+        dueDate:
+          period.dueDate,
+
+        closedAt:
+          period.closedAt,
+
+        status:
+          period.status,
+
+        expectedAmount:
+          Number(period.expectedAmount),
+      },
+
+      equb: {
+        id: period.equb.id,
+
+        name:
+          period.equb.name,
+
+        contributionAmount:
+          Number(
+            period.equb.contributionAmount
           ),
-          paidAmount:
-            payment.paidAmount !== null
-              ? Number(payment.paidAmount)
-              : null,
-          status: payment.status,
-          paymentDate: payment.paymentDate,
-          referenceNumber:
-            payment.referenceNumber,
-          notes: payment.notes,
-          createdAt: payment.createdAt,
-          updatedAt: payment.updatedAt,
-        }
-      : null,
 
-    receipt: receipt
-      ? {
-          id: receipt.id,
-          imageUrl: receipt.imageUrl,
-          storageKey: receipt.storageKey,
-          originalFileName:
-            receipt.originalFileName,
-          mimeType: receipt.mimeType,
-          fileSize: receipt.fileSize,
-          status: receipt.status,
-          ocrProcessed: receipt.ocrProcessed,
-          uploadedAt: receipt.uploadedAt,
-          updatedAt: receipt.updatedAt,
+        frequency:
+          period.equb.frequency,
 
-          ocrData: receipt.ocrData
-            ? {
-                id: receipt.ocrData.id,
-                transactionReference:
-                  receipt.ocrData
-                    .transactionReference,
-                senderName:
-                  receipt.ocrData.senderName,
-                senderAccount:
-                  receipt.ocrData.senderAccount,
-                receiverName:
-                  receipt.ocrData.receiverName,
-                receiverAccount:
-                  receipt.ocrData.receiverAccount,
-                amount:
-                  receipt.ocrData.amount !== null
-                    ? Number(
-                        receipt.ocrData.amount
-                      )
-                    : null,
-                transactionDate:
-                  receipt.ocrData.transactionDate,
-                bankName:
-                  receipt.ocrData.bankName,
-                rawText:
-                  receipt.ocrData.rawText,
-                confidence:
-                  receipt.ocrData.confidence !== null
-                    ? Number(
-                        receipt.ocrData.confidence
-                      )
-                    : null,
-                processedAt:
-                  receipt.ocrData.processedAt,
-              }
-            : null,
-        }
-      : null,
+        currency:
+          period.equb.currency,
 
-    verification: verification
-      ? {
-          id: verification.id,
-          decision: verification.decision,
-          reason: verification.reason,
-          verifiedAmount:
-            verification.verifiedAmount !== null
-              ? Number(
-                  verification.verifiedAmount
-                )
-              : null,
-          verifiedAt: verification.verifiedAt,
-          reviewer: verification.reviewer,
-        }
-      : null,
-  };
-});
+        status:
+          period.equb.status,
+      },
 
-// --------------------------------------------------
-// 5. Calculate summary
-// --------------------------------------------------
+      summary: {
+        totalMembers,
+        paidMembers,
+        verifiedMembers,
+        pendingMembers,
+        rejectedMembers,
+        missingMembers,
+        totalExpected,
+        totalPaid,
+      },
 
-const totalMembers = members.length;
+      count: members.length,
 
-const paidMembers = members.filter(
-  (member) => member.payment !== null
-).length;
+      members,
+    });
+  } catch (error) {
+    console.error(
+      "Get Payment Period Details Error:",
+      error
+    );
 
-const verifiedMembers = members.filter(
-  (member) =>
-    member.payment?.status === "VERIFIED"
-).length;
-
-const pendingMembers = members.filter(
-  (member) =>
-    member.payment &&
-    [
-      "PENDING",
-      "SUBMITTED",
-      "UNDER_REVIEW",
-      "NEEDS_REVIEW",
-    ].includes(member.payment.status)
-).length;
-
-const rejectedMembers = members.filter(
-  (member) =>
-    member.payment?.status === "REJECTED"
-).length;
-
-const missingMembers = members.filter(
-  (member) => member.payment === null
-).length;
-
-const totalExpected = members.reduce(
-  (total, member) =>
-    total + member.expectedAmount,
-  0
-);
-
-const totalPaid = members.reduce(
-  (total, member) =>
-    total +
-    Number(member.payment?.paidAmount || 0),
-  0
-);
-
-return res.status(200).json({
-  success: true,
-
-  period: {
-    id: period.id,
-    periodNumber: period.periodNumber,
-    startDate: period.startDate,
-    dueDate: period.dueDate,
-    closedAt: period.closedAt,
-    status: period.status,
-    expectedAmount: Number(
-      period.expectedAmount
-    ),
-  },
-
-  equb: {
-    id: period.equb.id,
-    name: period.equb.name,
-    contributionAmount: Number(
-      period.equb.contributionAmount
-    ),
-    frequency: period.equb.frequency,
-    currency: period.equb.currency,
-    status: period.equb.status,
-  },
-
-  summary: {
-    totalMembers,
-    paidMembers,
-    verifiedMembers,
-    pendingMembers,
-    rejectedMembers,
-    missingMembers,
-    totalExpected,
-    totalPaid,
-  },
-
-  count: members.length,
-
-  members,
-});
-
-
-} catch (error) {
-console.error(
-"Get Payment Period Details Error:",
-error
-);
-
-return res.status(500).json({
-  success: false,
-  message:
-    "Failed to fetch payment period details",
-});
-
-
-}
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to fetch payment period details",
+      error: error.message,
+    });
+  }
 };
-
-
-
 
 // ============================================================
 // PROCESS OCR
@@ -509,27 +624,34 @@ return res.status(500).json({
 export const processOCR = async (req, res) => {
   try {
     const { receiptId } = req.params;
+
     const userId = req.user.userId;
     const userRole = req.user.role;
 
     // --------------------------------------------------
-    // 1. Find receipt
+    // 1. Find receipt + payment + allocations
     // --------------------------------------------------
 
     const receipt = await prisma.receipt.findUnique({
       where: {
         id: receiptId,
       },
+
       include: {
         payment: {
           include: {
-            period: {
+            allocations: {
               include: {
-                equb: true,
+                period: {
+                  include: {
+                    equb: true,
+                  },
+                },
               },
             },
           },
         },
+
         ocrData: true,
       },
     });
@@ -541,11 +663,21 @@ export const processOCR = async (req, res) => {
       });
     }
 
+    if (!receipt.payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment associated with receipt was not found",
+      });
+    }
+
     // --------------------------------------------------
     // 2. Only ADMIN / SUPER_ADMIN can process OCR
     // --------------------------------------------------
 
-    if (userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
+    if (
+      userRole !== "ADMIN" &&
+      userRole !== "SUPER_ADMIN"
+    ) {
       return res.status(403).json({
         success: false,
         message: "You are not authorized to process OCR",
@@ -553,169 +685,255 @@ export const processOCR = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 3. ADMIN can only manage their own Equb
+    // 3. Make sure payment has an allocation
     // --------------------------------------------------
 
-    if (
-      userRole === "ADMIN" &&
-      receipt.payment.period.equb.createdById !== userId
-    ) {
-      return res.status(403).json({
+    const allocation =
+      receipt.payment.allocations[0];
+
+    if (!allocation) {
+      return res.status(400).json({
         success: false,
-        message: "You are not authorized to process this receipt",
+        message:
+          "Payment is not associated with a payment period",
       });
     }
 
     // --------------------------------------------------
-    // 4. Make sure receipt has not already been processed
+    // 4. ADMIN can only manage their own Equb
     // --------------------------------------------------
 
-    if (receipt.ocrProcessed && receipt.ocrData) {
+    if (
+      userRole === "ADMIN" &&
+      allocation.period.equb.createdById !== userId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You are not authorized to process this receipt",
+      });
+    }
+
+    // --------------------------------------------------
+    // 5. Make sure receipt has not already been processed
+    // --------------------------------------------------
+
+    if (
+      receipt.ocrProcessed &&
+      receipt.ocrData
+    ) {
       return res.status(409).json({
         success: false,
-        message: "OCR has already been processed for this receipt",
+        message:
+          "OCR has already been processed for this receipt",
         ocrData: receipt.ocrData,
       });
     }
 
     // --------------------------------------------------
-    // 5. Build local image path
+    // 6. Build local image path
     // --------------------------------------------------
 
-// --------------------------------------------------
-// 5. Build local image path
-// --------------------------------------------------
+    const fileName =
+      path.basename(receipt.storageKey);
 
-const fileName = path.basename(receipt.storageKey);
+    const imagePath = path.join(
+      process.cwd(),
+      "uploads",
+      "receipts",
+      fileName
+    );
 
-const imagePath = path.join(
-  process.cwd(),
-  "uploads",
-  "receipts",
-  fileName
-);
+    console.log(
+      "OCR storageKey:",
+      receipt.storageKey
+    );
 
-console.log("OCR storageKey:", receipt.storageKey);
-console.log("OCR fileName:", fileName);
-console.log("OCR imagePath:", imagePath);
+    console.log(
+      "OCR fileName:",
+      fileName
+    );
 
-if (!fs.existsSync(imagePath)) {
-  return res.status(404).json({
-    success: false,
-    message: "Receipt image file does not exist",
-    imagePath,
-    storageKey: receipt.storageKey,
-  });
-}
+    console.log(
+      "OCR imagePath:",
+      imagePath
+    );
+
+    if (!fs.existsSync(imagePath)) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Receipt image file does not exist",
+        imagePath,
+        storageKey:
+          receipt.storageKey,
+      });
+    }
 
     // --------------------------------------------------
-    // 6. Mark receipt as PROCESSING
+    // 7. Mark receipt as PROCESSING
     // --------------------------------------------------
 
     await prisma.receipt.update({
       where: {
         id: receipt.id,
       },
+
       data: {
         status: "PROCESSING",
       },
     });
 
     // --------------------------------------------------
-    // 7. Run OCR
+    // 8. Run OCR
     // --------------------------------------------------
 
-    const ocrResult = await processReceiptOCR(imagePath);
+    const ocrResult =
+      await processReceiptOCR(imagePath);
 
     // --------------------------------------------------
-    // 8. Save OCR result
+    // 9. Save OCR result
     // --------------------------------------------------
 
-    const ocrData = await prisma.oCRData.upsert({
-      where: {
-        receiptId: receipt.id,
-      },
+    const ocrData =
+      await prisma.oCRData.upsert({
+        where: {
+          receiptId: receipt.id,
+        },
 
-      update: {
-        transactionReference: ocrResult.transactionReference,
-        senderName: ocrResult.senderName,
-        senderAccount: ocrResult.senderAccount,
-        receiverName: ocrResult.receiverName,
-        receiverAccount: ocrResult.receiverAccount,
-        amount: ocrResult.amount,
-        transactionDate: ocrResult.transactionDate
-          ? new Date(ocrResult.transactionDate)
-          : null,
-        bankName: ocrResult.bankName,
-        rawText: ocrResult.rawText,
-        confidence: ocrResult.confidence,
-        processedAt: new Date(),
-      },
+        update: {
+          transactionReference:
+            ocrResult.transactionReference,
 
-      create: {
-        receiptId: receipt.id,
+          senderName:
+            ocrResult.senderName,
 
-        transactionReference: ocrResult.transactionReference,
-        senderName: ocrResult.senderName,
-        senderAccount: ocrResult.senderAccount,
-        receiverName: ocrResult.receiverName,
-        receiverAccount: ocrResult.receiverAccount,
-        amount: ocrResult.amount,
+          senderAccount:
+            ocrResult.senderAccount,
 
-        transactionDate: ocrResult.transactionDate
-          ? new Date(ocrResult.transactionDate)
-          : null,
+          receiverName:
+            ocrResult.receiverName,
 
-        bankName: ocrResult.bankName,
-        rawText: ocrResult.rawText,
-        confidence: ocrResult.confidence,
+          receiverAccount:
+            ocrResult.receiverAccount,
 
-        processedAt: new Date(),
-      },
-    });
+          amount:
+            ocrResult.amount,
+
+          transactionDate:
+            ocrResult.transactionDate
+              ? new Date(
+                  ocrResult.transactionDate
+                )
+              : null,
+
+          bankName:
+            ocrResult.bankName,
+
+          rawText:
+            ocrResult.rawText,
+
+          confidence:
+            ocrResult.confidence,
+
+          processedAt:
+            new Date(),
+        },
+
+        create: {
+          receiptId:
+            receipt.id,
+
+          transactionReference:
+            ocrResult.transactionReference,
+
+          senderName:
+            ocrResult.senderName,
+
+          senderAccount:
+            ocrResult.senderAccount,
+
+          receiverName:
+            ocrResult.receiverName,
+
+          receiverAccount:
+            ocrResult.receiverAccount,
+
+          amount:
+            ocrResult.amount,
+
+          transactionDate:
+            ocrResult.transactionDate
+              ? new Date(
+                  ocrResult.transactionDate
+                )
+              : null,
+
+          bankName:
+            ocrResult.bankName,
+
+          rawText:
+            ocrResult.rawText,
+
+          confidence:
+            ocrResult.confidence,
+
+          processedAt:
+            new Date(),
+        },
+      });
 
     // --------------------------------------------------
-    // 9. Update receipt
+    // 10. Update receipt
     // --------------------------------------------------
 
-    const updatedReceipt = await prisma.receipt.update({
-      where: {
-        id: receipt.id,
-      },
+    const updatedReceipt =
+      await prisma.receipt.update({
+        where: {
+          id: receipt.id,
+        },
 
-      data: {
-        status: "PROCESSED",
-        ocrProcessed: true,
-      },
+        data: {
+          status: "PROCESSED",
+          ocrProcessed: true,
+        },
 
-      include: {
-        ocrData: true,
-      },
-    });
+        include: {
+          ocrData: true,
+        },
+      });
 
     // --------------------------------------------------
-    // 10. Return OCR result
+    // 11. Return OCR result
     // --------------------------------------------------
 
     return res.status(200).json({
       success: true,
-      message: "Receipt OCR processed successfully",
 
-      receipt: updatedReceipt,
+      message:
+        "Receipt OCR processed successfully",
+
+      receipt:
+        updatedReceipt,
 
       ocrData,
     });
   } catch (error) {
-    console.error("Process OCR Error:", error);
+    console.error(
+      "Process OCR Error:",
+      error
+    );
 
-    // Try to mark receipt as uploaded again
+    // Try to reset receipt status
     // if OCR processing failed.
+
     try {
       if (req.params.receiptId) {
         await prisma.receipt.update({
           where: {
             id: req.params.receiptId,
           },
+
           data: {
             status: "UPLOADED",
           },
@@ -730,12 +948,12 @@ if (!fs.existsSync(imagePath)) {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to process receipt OCR",
+      message:
+        "Failed to process receipt OCR",
       error: error.message,
     });
   }
 };
-
 
 // ============================================================
 // APPROVE PAYMENT
@@ -753,36 +971,45 @@ export const approvePayment = async (req, res) => {
     // 1. Only admins can approve
     // --------------------------------------------------
 
-    if (userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
+    if (
+      userRole !== "ADMIN" &&
+      userRole !== "SUPER_ADMIN"
+    ) {
       return res.status(403).json({
         success: false,
-        message: "You are not authorized to approve payments",
+        message:
+          "You are not authorized to approve payments",
       });
     }
 
     // --------------------------------------------------
-    // 2. Find receipt + payment + Equb
+    // 2. Find receipt + payment + allocations
     // --------------------------------------------------
 
-    const receipt = await prisma.receipt.findUnique({
-      where: {
-        id: receiptId,
-      },
+    const receipt =
+      await prisma.receipt.findUnique({
+        where: {
+          id: receiptId,
+        },
 
-      include: {
-        payment: {
-          include: {
-            period: {
-              include: {
-                equb: true,
+        include: {
+          payment: {
+            include: {
+              allocations: {
+                include: {
+                  period: {
+                    include: {
+                      equb: true,
+                    },
+                  },
+                },
               },
             },
           },
-        },
 
-        ocrData: true,
-      },
-    });
+          ocrData: true,
+        },
+      });
 
     if (!receipt) {
       return res.status(404).json({
@@ -791,126 +1018,181 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    const payment = receipt.payment;
-
-    // --------------------------------------------------
-    // 3. ADMIN can only approve their own Equb
-    // --------------------------------------------------
-
-    if (
-      userRole === "ADMIN" &&
-      payment.period.equb.createdById !== userId
-    ) {
-      return res.status(403).json({
+    if (!receipt.payment) {
+      return res.status(404).json({
         success: false,
-        message: "You are not authorized to approve this payment",
+        message:
+          "Payment associated with receipt was not found",
+      });
+    }
+
+    const payment =
+      receipt.payment;
+
+    // --------------------------------------------------
+    // 3. Make sure payment has an allocation
+    // --------------------------------------------------
+
+    const allocation =
+      payment.allocations[0];
+
+    if (!allocation) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment is not associated with a payment period",
       });
     }
 
     // --------------------------------------------------
-    // 4. Prevent approving rejected/already verified payment
+    // 4. ADMIN can only approve their own Equb
+    // --------------------------------------------------
+
+    if (
+      userRole === "ADMIN" &&
+      allocation.period.equb.createdById !== userId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You are not authorized to approve this payment",
+      });
+    }
+
+    // --------------------------------------------------
+    // 5. Prevent approving rejected/already verified payment
     // --------------------------------------------------
 
     if (payment.status === "VERIFIED") {
       return res.status(409).json({
         success: false,
-        message: "Payment is already verified",
+        message:
+          "Payment is already verified",
       });
     }
 
     if (payment.status === "REJECTED") {
       return res.status(409).json({
         success: false,
-        message: "Payment has already been rejected",
+        message:
+          "Payment has already been rejected",
       });
     }
 
     // --------------------------------------------------
-    // 5. Determine verified amount
+    // 6. Determine verified amount
     //
     // OCR amount is preferred.
-    // If OCR did not find an amount, use expected amount.
+    // If OCR did not find an amount,
+    // use the allocated amount.
     // --------------------------------------------------
 
     const verifiedAmount =
       receipt.ocrData?.amount !== null &&
       receipt.ocrData?.amount !== undefined
         ? receipt.ocrData.amount
-        : payment.expectedAmount;
+        : allocation.amount;
 
     // --------------------------------------------------
-    // 6. Update payment + create verification
+    // 7. Update payment + verification + receipt
     // --------------------------------------------------
 
-    const result = await prisma.$transaction(async (tx) => {
-      const updatedPayment = await tx.payment.update({
-        where: {
-          id: payment.id,
-        },
+    const result =
+      await prisma.$transaction(
+        async (tx) => {
+          const updatedPayment =
+            await tx.payment.update({
+              where: {
+                id: payment.id,
+              },
 
-        data: {
-          status: "VERIFIED",
-          paidAmount: verifiedAmount,
+              data: {
+                status: "VERIFIED",
 
-          paymentDate:
-            receipt.ocrData?.transactionDate ||
-            payment.paymentDate,
+                paidAmount:
+                  verifiedAmount,
 
-          referenceNumber:
-            receipt.ocrData?.transactionReference ||
-            payment.referenceNumber,
-        },
-      });
+                paymentDate:
+                  receipt.ocrData
+                    ?.transactionDate ||
+                  payment.paymentDate,
 
-      const verification = await tx.paymentVerification.create({
-        data: {
-          paymentId: payment.id,
-          reviewerId: userId,
+                referenceNumber:
+                  receipt.ocrData
+                    ?.transactionReference ||
+                  payment.referenceNumber,
+              },
+            });
 
-          decision: "VERIFIED",
+          const verification =
+            await tx.paymentVerification.create({
+              data: {
+                paymentId:
+                  payment.id,
 
-          reason:
-            req.body?.reason ||
-            "Payment verified by administrator",
+                reviewerId:
+                  userId,
 
-          verifiedAmount,
-        },
-      });
+                decision:
+                  "VERIFIED",
 
-      await tx.receipt.update({
-        where: {
-          id: receipt.id,
-        },
+                reason:
+                  req.body?.reason ||
+                  "Payment verified by administrator",
 
-        data: {
-          status: "VERIFIED",
-        },
-      });
+                verifiedAmount,
+              },
+            });
 
-      return {
-        payment: updatedPayment,
-        verification,
-      };
-    });
+          await tx.receipt.update({
+            where: {
+              id: receipt.id,
+            },
+
+            data: {
+              status: "VERIFIED",
+            },
+          });
+
+          return {
+            payment:
+              updatedPayment,
+
+            verification,
+          };
+        }
+      );
+
+    // --------------------------------------------------
+    // 8. Return response
+    // --------------------------------------------------
 
     return res.status(200).json({
       success: true,
-      message: "Payment approved successfully",
 
-      payment: result.payment,
-      verification: result.verification,
+      message:
+        "Payment approved successfully",
+
+      payment:
+        result.payment,
+
+      verification:
+        result.verification,
     });
   } catch (error) {
-    console.error("Approve payment error:", error);
+    console.error(
+      "Approve payment error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: "Failed to approve payment",
+      message:
+        "Failed to approve payment",
       error: error.message,
     });
   }
 };
-
 
 // ============================================================
 // REJECT PAYMENT
@@ -933,7 +1215,8 @@ export const rejectPayment = async (req, res) => {
     if (!reason || !reason.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Rejection reason is required",
+        message:
+          "Rejection reason is required",
       });
     }
 
@@ -941,34 +1224,43 @@ export const rejectPayment = async (req, res) => {
     // 2. Only admins can reject
     // --------------------------------------------------
 
-    if (userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
+    if (
+      userRole !== "ADMIN" &&
+      userRole !== "SUPER_ADMIN"
+    ) {
       return res.status(403).json({
         success: false,
-        message: "You are not authorized to reject payments",
+        message:
+          "You are not authorized to reject payments",
       });
     }
 
     // --------------------------------------------------
-    // 3. Find receipt
+    // 3. Find receipt + payment + allocations
     // --------------------------------------------------
 
-    const receipt = await prisma.receipt.findUnique({
-      where: {
-        id: receiptId,
-      },
+    const receipt =
+      await prisma.receipt.findUnique({
+        where: {
+          id: receiptId,
+        },
 
-      include: {
-        payment: {
-          include: {
-            period: {
-              include: {
-                equb: true,
+        include: {
+          payment: {
+            include: {
+              allocations: {
+                include: {
+                  period: {
+                    include: {
+                      equb: true,
+                    },
+                  },
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
     if (!receipt) {
       return res.status(404).json({
@@ -977,99 +1269,157 @@ export const rejectPayment = async (req, res) => {
       });
     }
 
-    const payment = receipt.payment;
-
-    // --------------------------------------------------
-    // 4. ADMIN can only reject their own Equb
-    // --------------------------------------------------
-
-    if (
-      userRole === "ADMIN" &&
-      payment.period.equb.createdById !== userId
-    ) {
-      return res.status(403).json({
+    if (!receipt.payment) {
+      return res.status(404).json({
         success: false,
-        message: "You are not authorized to reject this payment",
+        message:
+          "Payment associated with receipt was not found",
+      });
+    }
+
+    const payment =
+      receipt.payment;
+
+    // --------------------------------------------------
+    // 4. Make sure payment has an allocation
+    // --------------------------------------------------
+
+    const allocation =
+      payment.allocations[0];
+
+    if (!allocation) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment is not associated with a payment period",
       });
     }
 
     // --------------------------------------------------
-    // 5. Prevent duplicate rejection
+    // 5. ADMIN can only reject their own Equb
+    // --------------------------------------------------
+
+    if (
+      userRole === "ADMIN" &&
+      allocation.period.equb.createdById !== userId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You are not authorized to reject this payment",
+      });
+    }
+
+    // --------------------------------------------------
+    // 6. Prevent duplicate rejection
     // --------------------------------------------------
 
     if (payment.status === "REJECTED") {
       return res.status(409).json({
         success: false,
-        message: "Payment is already rejected",
+        message:
+          "Payment is already rejected",
       });
     }
 
     if (payment.status === "VERIFIED") {
       return res.status(409).json({
         success: false,
-        message: "Verified payment cannot be rejected",
+        message:
+          "Verified payment cannot be rejected",
       });
     }
 
     // --------------------------------------------------
-    // 6. Update payment + verification + receipt
+    // 7. Update payment + verification + receipt
     // --------------------------------------------------
 
-    const result = await prisma.$transaction(async (tx) => {
-      const updatedPayment = await tx.payment.update({
-        where: {
-          id: payment.id,
-        },
+    const result =
+      await prisma.$transaction(
+        async (tx) => {
+          const updatedPayment =
+            await tx.payment.update({
+              where: {
+                id: payment.id,
+              },
 
-        data: {
-          status: "REJECTED",
-        },
-      });
+              data: {
+                status: "REJECTED",
+              },
+            });
 
-      const verification = await tx.paymentVerification.create({
-        data: {
-          paymentId: payment.id,
-          reviewerId: userId,
+          const verification =
+            await tx.paymentVerification.create({
+              data: {
+                paymentId:
+                  payment.id,
 
-          decision: "REJECTED",
+                reviewerId:
+                  userId,
 
-          reason: reason.trim(),
+                decision:
+                  "REJECTED",
 
-          verifiedAmount: null,
-        },
-      });
+                reason:
+                  reason.trim(),
 
-      const updatedReceipt = await tx.receipt.update({
-        where: {
-          id: receipt.id,
-        },
+                verifiedAmount:
+                  null,
+              },
+            });
 
-        data: {
-          status: "REJECTED",
-        },
-      });
+          const updatedReceipt =
+            await tx.receipt.update({
+              where: {
+                id: receipt.id,
+              },
 
-      return {
-        payment: updatedPayment,
-        verification,
-        receipt: updatedReceipt,
-      };
-    });
+              data: {
+                status: "REJECTED",
+              },
+            });
+
+          return {
+            payment:
+              updatedPayment,
+
+            verification,
+
+            receipt:
+              updatedReceipt,
+          };
+        }
+      );
+
+    // --------------------------------------------------
+    // 8. Return response
+    // --------------------------------------------------
 
     return res.status(200).json({
       success: true,
-      message: "Payment rejected successfully",
 
-      payment: result.payment,
-      verification: result.verification,
-      receipt: result.receipt,
+      message:
+        "Payment rejected successfully",
+
+      payment:
+        result.payment,
+
+      verification:
+        result.verification,
+
+      receipt:
+        result.receipt,
     });
   } catch (error) {
-    console.error("Reject payment error:", error);
+    console.error(
+      "Reject payment error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: "Failed to reject payment",
+      message:
+        "Failed to reject payment",
       error: error.message,
     });
   }

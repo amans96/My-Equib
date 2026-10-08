@@ -1263,6 +1263,7 @@ export const getEqubPeriods = async (req, res) => {
   }
 };
 
+
 export const getMyEqubPeriods = async (req, res) => {
   try {
     const { id: equbId } = req.params;
@@ -1287,6 +1288,7 @@ export const getMyEqubPeriods = async (req, res) => {
       where: {
         id: equbId,
       },
+
       select: {
         id: true,
         name: true,
@@ -1319,6 +1321,7 @@ export const getMyEqubPeriods = async (req, res) => {
           equbId,
         },
       },
+
       select: {
         id: true,
         memberNumber: true,
@@ -1347,6 +1350,12 @@ export const getMyEqubPeriods = async (req, res) => {
 
     // --------------------------------------------------
     // 5. Get all periods + this member's payment
+    //
+    // PaymentPeriod
+    //      ↓
+    // PaymentAllocation
+    //      ↓
+    // Payment
     // --------------------------------------------------
 
     const periods = await prisma.paymentPeriod.findMany({
@@ -1363,35 +1372,44 @@ export const getMyEqubPeriods = async (req, res) => {
         status: true,
         expectedAmount: true,
 
-        payments: {
+        allocations: {
           where: {
-            membershipId: membership.id,
+            payment: {
+              membershipId: membership.id,
+            },
           },
 
           select: {
             id: true,
-            expectedAmount: true,
-            paidAmount: true,
-            status: true,
-            paymentDate: true,
-            referenceNumber: true,
-            notes: true,
+            amount: true,
 
-            receipts: {
+            payment: {
               select: {
                 id: true,
+                expectedAmount: true,
+                paidAmount: true,
                 status: true,
-                ocrProcessed: true,
-                uploadedAt: true,
-                imageUrl: true,
-                originalFileName: true,
-              },
+                paymentDate: true,
+                referenceNumber: true,
+                notes: true,
 
-              orderBy: {
-                uploadedAt: "desc",
-              },
+                receipts: {
+                  select: {
+                    id: true,
+                    status: true,
+                    ocrProcessed: true,
+                    uploadedAt: true,
+                    imageUrl: true,
+                    originalFileName: true,
+                  },
 
-              take: 1,
+                  orderBy: {
+                    uploadedAt: "desc",
+                  },
+
+                  take: 1,
+                },
+              },
             },
           },
 
@@ -1409,7 +1427,10 @@ export const getMyEqubPeriods = async (req, res) => {
     // --------------------------------------------------
 
     const formattedPeriods = periods.map((period) => {
-      const payment = period.payments[0] || null;
+      const allocation = period.allocations[0] || null;
+
+      const payment = allocation?.payment || null;
+
       const receipt = payment?.receipts?.[0] || null;
 
       let paymentStatus = "NOT_PAID";
@@ -1418,8 +1439,17 @@ export const getMyEqubPeriods = async (req, res) => {
         paymentStatus = payment.status;
       }
 
+      const canUploadReceipt =
+        period.status === "OPEN" &&
+        (
+          !payment ||
+          payment.status === "REJECTED" ||
+          payment.status === "NEEDS_REVIEW"
+        );
+
       return {
         id: period.id,
+
         periodNumber: period.periodNumber,
 
         startDate: period.startDate,
@@ -1438,9 +1468,17 @@ export const getMyEqubPeriods = async (req, res) => {
                 payment.expectedAmount
               ),
 
-              paidAmount: payment.paidAmount
-                ? Number(payment.paidAmount)
+              // Amount allocated specifically
+              // to this payment period.
+              allocatedAmount: allocation
+                ? Number(allocation.amount)
                 : null,
+
+              // Total amount of the payment transaction.
+              paidAmount:
+                payment.paidAmount !== null
+                  ? Number(payment.paidAmount)
+                  : null,
 
               status: payment.status,
 
@@ -1454,11 +1492,18 @@ export const getMyEqubPeriods = async (req, res) => {
               receipt: receipt
                 ? {
                     id: receipt.id,
+
                     status: receipt.status,
+
                     ocrProcessed:
                       receipt.ocrProcessed,
-                    uploadedAt: receipt.uploadedAt,
-                    imageUrl: receipt.imageUrl,
+
+                    uploadedAt:
+                      receipt.uploadedAt,
+
+                    imageUrl:
+                      receipt.imageUrl,
+
                     originalFileName:
                       receipt.originalFileName,
                   }
@@ -1468,10 +1513,7 @@ export const getMyEqubPeriods = async (req, res) => {
 
         paymentStatus,
 
-        canUploadReceipt:
-          !payment ||
-          payment.status === "REJECTED" ||
-          payment.status === "NEEDS_REVIEW",
+        canUploadReceipt,
       };
     });
 
@@ -1512,30 +1554,50 @@ export const getMyEqubPeriods = async (req, res) => {
       equb: {
         id: equb.id,
         name: equb.name,
+
         contributionAmount: Number(
           equb.contributionAmount
         ),
+
         frequency: equb.frequency,
+
         totalPeriods: equb.totalPeriods,
+
         currentPeriod: equb.currentPeriod,
+
         status: equb.status,
+
         currency: equb.currency,
+
         startDate: equb.startDate,
+
         endDate: equb.endDate,
       },
 
       membership: {
         id: membership.id,
-        memberNumber: membership.memberNumber,
-        shares: Number(membership.shares),
-        status: membership.status,
+
+        memberNumber:
+          membership.memberNumber,
+
+        shares: Number(
+          membership.shares
+        ),
+
+        status:
+          membership.status,
       },
 
       summary: {
-        totalPeriods: formattedPeriods.length,
+        totalPeriods:
+          formattedPeriods.length,
+
         paidPeriods,
+
         pendingPeriods,
+
         unpaidPeriods,
+
         rejectedPeriods,
       },
 
@@ -1549,13 +1611,11 @@ export const getMyEqubPeriods = async (req, res) => {
 
     return res.status(500).json({
       success: false,
+
       message:
         "Failed to fetch your Equb payment periods",
+
+      error: error.message,
     });
   }
 };
-
-
-
-
-

@@ -15,10 +15,13 @@ import * as ImagePicker from "expo-image-picker";
 
 import {
   ArrowLeft,
+  Camera,
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Image as ImageIcon,
   Upload,
+  X,
   XCircle,
 } from "lucide-react-native";
 
@@ -55,16 +58,20 @@ type Receipt = {
   id: string;
   status: string;
   ocrProcessed: boolean;
-  createdAt: string;
+  uploadedAt?: string;
+  imageUrl?: string | null;
+  originalFileName?: string | null;
 };
 
 type Payment = {
   id: string;
-  paidAmount: string | number;
+  expectedAmount?: string | number;
+  allocatedAmount?: string | number | null;
+  paidAmount?: string | number | null;
   status: string;
-  paidAt?: string | null;
-  verifiedAt?: string | null;
-  rejectedAt?: string | null;
+  paymentDate?: string | null;
+  referenceNumber?: string | null;
+  notes?: string | null;
   rejectionReason?: string | null;
   receipt?: Receipt | null;
 };
@@ -77,7 +84,6 @@ type PaymentPeriod = {
   closedAt?: string | null;
   status: string;
   expectedAmount: string | number;
-
   payment: Payment | null;
   paymentStatus: string;
   canUploadReceipt: boolean;
@@ -105,6 +111,9 @@ export default function PaymentsScreen() {
   const [selectedPeriodId, setSelectedPeriodId] =
     useState<string | null>(null);
 
+  const [pickerPeriodId, setPickerPeriodId] =
+    useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -126,9 +135,6 @@ export default function PaymentsScreen() {
       ] = await Promise.all([
         getEqubs(),
         getMyMemberships(),
-
-        // IMPORTANT:
-        // This is the member-specific endpoint.
         apiRequest<{
           periods: PaymentPeriod[];
         }>(`/equbs/${id}/my-periods`),
@@ -187,16 +193,29 @@ export default function PaymentsScreen() {
     setRefreshing(true);
     loadPaymentData();
   };
-  
-const handleBack = () => {
-  if (router.canGoBack()) {
-    router.back();
-  } else {
-    router.replace("/(member)/equbs");
-  }
-};
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(member)/equbs");
+    }
+  };
 
+  // --------------------------------------------------
+  // Receipt flow
+  // --------------------------------------------------
+
+  const openReceiptPicker = (periodId: string) => {
+    setSelectedPeriodId(periodId);
+    setPickerPeriodId(periodId);
+  };
+
+  const closeReceiptPicker = () => {
+    if (!uploading) {
+      setPickerPeriodId(null);
+    }
+  };
 
   const pickReceipt = async (periodId: string) => {
     try {
@@ -221,7 +240,6 @@ const handleBack = () => {
         });
 
       if (result.canceled) {
-        setSelectedPeriodId(null);
         return;
       }
 
@@ -234,9 +252,9 @@ const handleBack = () => {
           `receipt-${Date.now()}.jpg`,
         type: asset.mimeType || "image/jpeg",
       });
-    } catch {
-      setSelectedPeriodId(null);
 
+      setPickerPeriodId(null);
+    } catch {
       Alert.alert(
         "Error",
         "Could not select the receipt image."
@@ -268,7 +286,6 @@ const handleBack = () => {
         });
 
       if (result.canceled) {
-        setSelectedPeriodId(null);
         return;
       }
 
@@ -281,9 +298,9 @@ const handleBack = () => {
           `receipt-${Date.now()}.jpg`,
         type: asset.mimeType || "image/jpeg",
       });
-    } catch {
-      setSelectedPeriodId(null);
 
+      setPickerPeriodId(null);
+    } catch {
       Alert.alert(
         "Error",
         "Could not take the receipt photo."
@@ -291,11 +308,28 @@ const handleBack = () => {
     }
   };
 
+  const removeSelectedReceipt = () => {
+    if (uploading) {
+      return;
+    }
+
+    setSelectedReceipt(null);
+    setSelectedPeriodId(null);
+  };
+
   const uploadReceipt = async (periodId: string) => {
     if (!selectedReceipt) {
       Alert.alert(
         "Receipt required",
         "Please select or take a photo of your payment receipt."
+      );
+      return;
+    }
+
+    if (selectedPeriodId !== periodId) {
+      Alert.alert(
+        "Period mismatch",
+        "Please select a receipt for this payment period."
       );
       return;
     }
@@ -325,6 +359,7 @@ const handleBack = () => {
 
       setSelectedReceipt(null);
       setSelectedPeriodId(null);
+      setPickerPeriodId(null);
 
       Alert.alert(
         "Receipt submitted",
@@ -349,75 +384,19 @@ const handleBack = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-slate-50">
-        <ActivityIndicator
-          size="large"
-          color="#0f172a"
-        />
-
-        <Text className="mt-4 text-sm text-slate-500">
-          Loading payments...
-        </Text>
-      </View>
-    );
-  }
-
-  if (!equb || !membership) {
-    return (
-      <View className="flex-1 items-center justify-center bg-slate-50 px-6">
-        <Text className="text-xl font-bold text-slate-900">
-          Unable to load payments
-        </Text>
-
-        <Text className="mt-2 text-center text-sm text-slate-500">
-          {errorMessage || "Something went wrong."}
-        </Text>
-
-        <Pressable
-          onPress={loadPaymentData}
-          className="mt-6 rounded-xl bg-slate-900 px-8 py-4"
-        >
-          <Text className="font-bold text-white">
-            Try Again
-          </Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  /*
-   * Find the current OPEN period.
-   */
-  const openPeriods = periods.filter(
-    (period) => period.status === "OPEN"
-  );
-
-  const currentPeriod =
-    openPeriods.find(
-      (period) =>
-        period.periodNumber ===
-        equb.currentPeriod
-    ) ||
-    openPeriods[0] ||
-    null;
-
-  const amount =
-    currentPeriod?.expectedAmount ??
-    Number(equb.contributionAmount) *
-      Number(membership.shares);
+  // --------------------------------------------------
+  // Helpers
+  // --------------------------------------------------
 
   const formatMoney = (
     value: string | number
   ) =>
-    `${equb.currency} ${Number(value).toLocaleString(
-      "en-US",
-      {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }
-    )}`;
+    `${equb?.currency || ""} ${Number(
+      value
+    ).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
 
   const formatDate = (date: string) =>
     new Date(date).toLocaleDateString("en-US", {
@@ -480,6 +459,68 @@ const handleBack = () => {
     }
   };
 
+  const selectedPeriod =
+    periods.find(
+      (period) => period.id === selectedPeriodId
+    ) || null;
+
+  if (loading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-slate-50">
+        <ActivityIndicator
+          size="large"
+          color="#0f172a"
+        />
+
+        <Text className="mt-4 text-sm text-slate-500">
+          Loading payments...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!equb || !membership) {
+    return (
+      <View className="flex-1 items-center justify-center bg-slate-50 px-6">
+        <Text className="text-xl font-bold text-slate-900">
+          Unable to load payments
+        </Text>
+
+        <Text className="mt-2 text-center text-sm text-slate-500">
+          {errorMessage ||
+            "Something went wrong."}
+        </Text>
+
+        <Pressable
+          onPress={loadPaymentData}
+          className="mt-6 rounded-xl bg-slate-900 px-8 py-4"
+        >
+          <Text className="font-bold text-white">
+            Try Again
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const openPeriods = periods.filter(
+    (period) => period.status === "OPEN"
+  );
+
+  const currentPeriod =
+    openPeriods.find(
+      (period) =>
+        period.periodNumber ===
+        equb.currentPeriod
+    ) ||
+    openPeriods[0] ||
+    null;
+
+  const amount =
+    currentPeriod?.expectedAmount ??
+    Number(equb.contributionAmount) *
+      Number(membership.shares);
+
   return (
     <View className="flex-1 bg-slate-50">
       <ScrollView
@@ -497,10 +538,10 @@ const handleBack = () => {
         {/* Header */}
 
         <View className="px-5 pb-5 pt-14">
-         <Pressable 
-  onPress={handleBack}
-  className="mb-6 h-10 w-10 items-center justify-center rounded-full bg-white"
->
+          <Pressable
+            onPress={handleBack}
+            className="mb-6 h-10 w-10 items-center justify-center rounded-full bg-white"
+          >
             <ArrowLeft
               size={22}
               color="#0f172a"
@@ -581,8 +622,6 @@ const handleBack = () => {
               </View>
             </View>
 
-            {/* Current payment status */}
-
             <View className="mt-6 border-t border-slate-700 pt-5">
               {currentPeriod.paymentStatus ===
               "VERIFIED" ? (
@@ -656,168 +695,6 @@ const handleBack = () => {
           </View>
         )}
 
-        {/* Receipt Upload */}
-
-        {currentPeriod &&
-        currentPeriod.canUploadReceipt ? (
-          <View className="mx-5 mt-6 rounded-3xl bg-white p-5">
-            <View className="flex-row items-center">
-              <View className="h-11 w-11 items-center justify-center rounded-2xl bg-slate-100">
-                <Upload
-                  size={21}
-                  color="#334155"
-                />
-              </View>
-
-              <View className="ml-3 flex-1">
-                <Text className="font-bold text-slate-900">
-                  Payment Receipt
-                </Text>
-
-                <Text className="mt-1 text-xs text-slate-500">
-                  Upload proof of your payment
-                </Text>
-              </View>
-            </View>
-
-            {selectedReceipt ? (
-              <View className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
-                <Image
-                  source={{
-                    uri: selectedReceipt.uri,
-                  }}
-                  className="h-64 w-full"
-                  resizeMode="cover"
-                />
-
-                <View className="p-4">
-                  <Text
-                    numberOfLines={1}
-                    className="font-semibold text-slate-900"
-                  >
-                    {selectedReceipt.name}
-                  </Text>
-
-                  <Pressable
-                    onPress={() => {
-                      setSelectedReceipt(null);
-                      setSelectedPeriodId(null);
-                    }}
-                    className="mt-3"
-                  >
-                    <Text className="text-sm font-semibold text-red-600">
-                      Remove image
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-
-            <View className="mt-5 flex-row">
-              <Pressable
-                onPress={() =>
-                  pickReceipt(currentPeriod.id)
-                }
-                disabled={uploading}
-                className="mr-2 flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 py-4"
-              >
-                <Text className="font-bold text-slate-800">
-                  Choose Photo
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() =>
-                  takeReceiptPhoto(
-                    currentPeriod.id
-                  )
-                }
-                disabled={uploading}
-                className="ml-2 flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 py-4"
-              >
-                <Text className="font-bold text-slate-800">
-                  Take Photo
-                </Text>
-              </Pressable>
-            </View>
-
-            <Pressable
-              onPress={() =>
-                uploadReceipt(currentPeriod.id)
-              }
-              disabled={
-                uploading ||
-                !selectedReceipt ||
-                selectedPeriodId !==
-                  currentPeriod.id
-              }
-              className={`mt-4 items-center justify-center rounded-2xl bg-slate-900 py-4 ${
-                uploading ||
-                !selectedReceipt ||
-                selectedPeriodId !==
-                  currentPeriod.id
-                  ? "opacity-40"
-                  : ""
-              }`}
-            >
-              {uploading ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text className="font-bold text-white">
-                  Submit Payment Receipt
-                </Text>
-              )}
-            </Pressable>
-
-            <View className="mt-4 rounded-2xl bg-amber-50 p-4">
-              <Text className="text-xs leading-5 text-amber-700">
-                Make sure the receipt clearly shows
-                the transaction amount, date, sender
-                and transaction reference. The
-                receipt will be reviewed before your
-                payment is marked as verified.
-              </Text>
-            </View>
-          </View>
-        ) : currentPeriod?.paymentStatus ===
-          "VERIFIED" ? (
-          <View className="mx-5 mt-6 rounded-3xl bg-emerald-50 p-5">
-            <View className="flex-row items-center">
-              <CheckCircle2
-                size={22}
-                color="#16a34a"
-              />
-
-              <Text className="ml-3 font-bold text-emerald-800">
-                Payment verified
-              </Text>
-            </View>
-
-            <Text className="mt-2 text-sm leading-5 text-emerald-700">
-              Your payment for this period has been
-              approved by the Equb administrator.
-            </Text>
-          </View>
-        ) : currentPeriod?.payment ? (
-          <View className="mx-5 mt-6 rounded-3xl bg-amber-50 p-5">
-            <View className="flex-row items-center">
-              <Clock3
-                size={22}
-                color="#d97706"
-              />
-
-              <Text className="ml-3 font-bold text-amber-800">
-                Payment under review
-              </Text>
-            </View>
-
-            <Text className="mt-2 text-sm leading-5 text-amber-700">
-              Your receipt has been submitted and is
-              waiting for administrator verification.
-            </Text>
-          </View>
-        ) : null}
-
         {/* Payment Periods */}
 
         <View className="mt-8 px-5">
@@ -826,7 +703,7 @@ const handleBack = () => {
           </Text>
 
           <Text className="mt-1 text-sm text-slate-500">
-            Your Equb payment schedule.
+            Tap a period to submit its receipt.
           </Text>
 
           <View className="mt-4">
@@ -845,16 +722,41 @@ const handleBack = () => {
                   period.id ===
                   currentPeriod?.id;
 
+                const canUpload =
+                  isOpen &&
+                  period.canUploadReceipt;
+
                 const statusClasses =
                   getPaymentStatusClasses(
                     period
                   );
 
+                const isSelected =
+                  selectedPeriodId ===
+                  period.id;
+
                 return (
-                  <View
+                  <Pressable
                     key={period.id}
-                    className="mb-3 rounded-2xl bg-white p-5"
+                    onPress={() => {
+                      if (canUpload) {
+                        openReceiptPicker(
+                          period.id
+                        );
+                      }
+                    }}
+                    disabled={
+                      !canUpload || uploading
+                    }
+                    className={`mb-3 rounded-2xl bg-white p-5 ${
+                      isSelected &&
+                      selectedReceipt
+                        ? "border-2 border-slate-900"
+                        : "border border-transparent"
+                    }`}
                   >
+                    {/* Period header */}
+
                     <View className="flex-row items-center">
                       <View className="h-11 w-11 items-center justify-center rounded-xl bg-slate-100">
                         <CalendarDays
@@ -864,10 +766,20 @@ const handleBack = () => {
                       </View>
 
                       <View className="ml-3 flex-1">
-                        <Text className="font-bold text-slate-900">
-                          Period{" "}
-                          {period.periodNumber}
-                        </Text>
+                        <View className="flex-row items-center">
+                          <Text className="font-bold text-slate-900">
+                            Period{" "}
+                            {period.periodNumber}
+                          </Text>
+
+                          {isCurrent ? (
+                            <View className="ml-2 rounded-full bg-slate-900 px-2 py-1">
+                              <Text className="text-[10px] font-bold text-white">
+                                CURRENT
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
 
                         <Text className="mt-1 text-xs text-slate-500">
                           {formatDate(
@@ -893,6 +805,8 @@ const handleBack = () => {
                       </View>
                     </View>
 
+                    {/* Amount */}
+
                     <View className="mt-4 flex-row items-center justify-between border-t border-slate-100 pt-4">
                       <Text className="text-sm text-slate-500">
                         Expected
@@ -905,11 +819,13 @@ const handleBack = () => {
                       </Text>
                     </View>
 
+                    {/* Existing payment state */}
+
                     {period.paymentStatus ===
                     "VERIFIED" ? (
-                      <View className="mt-3 flex-row items-center">
+                      <View className="mt-4 flex-row items-center">
                         <CheckCircle2
-                          size={15}
+                          size={16}
                           color="#16a34a"
                         />
 
@@ -919,21 +835,32 @@ const handleBack = () => {
                       </View>
                     ) : period.paymentStatus ===
                       "REJECTED" ? (
-                      <View className="mt-3 flex-row items-center">
-                        <XCircle
-                          size={15}
-                          color="#dc2626"
-                        />
+                      <View className="mt-4">
+                        <View className="flex-row items-center">
+                          <XCircle
+                            size={16}
+                            color="#dc2626"
+                          />
 
-                        <Text className="ml-2 text-xs font-semibold text-red-600">
-                          Receipt rejected — upload
-                          a new receipt
-                        </Text>
+                          <Text className="ml-2 text-xs font-semibold text-red-600">
+                            Receipt rejected
+                          </Text>
+                        </View>
+
+                        {period.payment
+                          ?.rejectionReason ? (
+                          <Text className="mt-2 text-xs leading-5 text-red-500">
+                            {
+                              period.payment
+                                .rejectionReason
+                            }
+                          </Text>
+                        ) : null}
                       </View>
                     ) : period.payment ? (
-                      <View className="mt-3 flex-row items-center">
+                      <View className="mt-4 flex-row items-center">
                         <Clock3
-                          size={15}
+                          size={16}
                           color="#d97706"
                         />
 
@@ -941,88 +868,221 @@ const handleBack = () => {
                           Waiting for verification
                         </Text>
                       </View>
-                    ) : period.canUploadReceipt ? (
-                      <View className="mt-3">
-                        <Text className="text-xs font-semibold text-slate-500">
-                          Payment not submitted
-                        </Text>
+                    ) : null}
+
+                    {/* Selected receipt preview */}
+
+                    {isSelected &&
+                    selectedReceipt ? (
+                      <View className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                        <View className="relative">
+                          <Image
+                            source={{
+                              uri: selectedReceipt.uri,
+                            }}
+                            className="h-56 w-full"
+                            resizeMode="cover"
+                          />
+
+                          <Pressable
+                            onPress={(event) => {
+                              event.stopPropagation();
+                              removeSelectedReceipt();
+                            }}
+                            disabled={uploading}
+                            className="absolute right-3 top-3 h-9 w-9 items-center justify-center rounded-full bg-black/70"
+                          >
+                            <X
+                              size={18}
+                              color="#ffffff"
+                            />
+                          </Pressable>
+                        </View>
+
+                        <View className="p-4">
+                          <Text
+                            numberOfLines={1}
+                            className="font-semibold text-slate-900"
+                          >
+                            {
+                              selectedReceipt.name
+                            }
+                          </Text>
+
+                          <Text className="mt-1 text-xs text-slate-500">
+                            Receipt ready to submit
+                          </Text>
+
+                          <Pressable
+                            onPress={(event) => {
+                              event.stopPropagation();
+                              openReceiptPicker(
+                                period.id
+                              );
+                            }}
+                            disabled={uploading}
+                            className="mt-3"
+                          >
+                            <Text className="text-sm font-bold text-slate-900">
+                              Replace image
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            onPress={(event) => {
+                              event.stopPropagation();
+                              uploadReceipt(
+                                period.id
+                              );
+                            }}
+                            disabled={uploading}
+                            className={`mt-4 items-center justify-center rounded-2xl bg-slate-900 py-4 ${
+                              uploading
+                                ? "opacity-50"
+                                : ""
+                            }`}
+                          >
+                            {uploading ? (
+                              <ActivityIndicator
+                                color="#ffffff"
+                              />
+                            ) : (
+                              <Text className="font-bold text-white">
+                                Submit Receipt
+                              </Text>
+                            )}
+                          </Pressable>
+                        </View>
                       </View>
                     ) : null}
 
-                    {isCurrent ? (
-                      <View className="mt-3 flex-row items-center">
-                        <CheckCircle2
-                          size={15}
-                          color="#16a34a"
+                    {/* Upload hint */}
+
+                    {canUpload &&
+                    !isSelected ? (
+                      <View className="mt-4 flex-row items-center rounded-xl bg-slate-50 px-3 py-3">
+                        <Upload
+                          size={16}
+                          color="#334155"
                         />
 
-                        <Text className="ml-2 text-xs font-semibold text-green-600">
-                          Current payment period
+                        <Text className="ml-2 text-xs font-semibold text-slate-600">
+                          Tap to upload receipt
                         </Text>
                       </View>
                     ) : null}
-
-                    {isOpen &&
-                    period.paymentStatus !==
-                      "VERIFIED" &&
-                    period.canUploadReceipt ? (
-                      <Pressable
-                        onPress={() => {
-                          setSelectedPeriodId(
-                            period.id
-                          );
-
-                          if (
-                            selectedReceipt
-                          ) {
-                            Alert.alert(
-                              "Receipt selected",
-                              "Your selected receipt is ready to submit for this period."
-                            );
-                          } else {
-                            Alert.alert(
-                              "Upload receipt",
-                              "Choose how you want to provide your payment receipt.",
-                              [
-                                {
-                                  text: "Choose Photo",
-                                  onPress: () =>
-                                    pickReceipt(
-                                      period.id
-                                    ),
-                                },
-                                {
-                                  text: "Take Photo",
-                                  onPress: () =>
-                                    takeReceiptPhoto(
-                                      period.id
-                                    ),
-                                },
-                                {
-                                  text: "Cancel",
-                                  style: "cancel",
-                                },
-                              ]
-                            );
-                          }
-                        }}
-                        className="mt-4 items-center justify-center rounded-2xl bg-slate-900 py-3"
-                      >
-                        <Text className="font-bold text-white">
-                          {period.paymentStatus ===
-                          "REJECTED"
-                            ? "Upload New Receipt"
-                            : "Upload Receipt"}
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
+                  </Pressable>
                 );
               })
             )}
           </View>
         </View>
       </ScrollView>
+
+      {/* Receipt Picker */}
+
+      {pickerPeriodId ? (
+        <View className="absolute inset-0 justify-end">
+          <Pressable
+            onPress={closeReceiptPicker}
+            className="absolute inset-0 bg-black/40"
+          />
+
+          <View className="rounded-t-3xl bg-white px-5 pb-8 pt-5">
+            <View className="mb-5 flex-row items-center justify-between">
+              <View className="flex-1">
+                <Text className="text-xl font-bold text-slate-900">
+                  Add receipt
+                </Text>
+
+                <Text className="mt-1 text-sm text-slate-500">
+                  Period{" "}
+                  {
+                    periods.find(
+                      (period) =>
+                        period.id ===
+                        pickerPeriodId
+                    )?.periodNumber
+                  }
+                  {" · "}
+                  Choose how to add your receipt
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={closeReceiptPicker}
+                className="h-9 w-9 items-center justify-center rounded-full bg-slate-100"
+              >
+                <X
+                  size={18}
+                  color="#334155"
+                />
+              </Pressable>
+            </View>
+
+            <View className="flex-row">
+              <Pressable
+                onPress={() =>
+                  pickReceipt(
+                    pickerPeriodId
+                  )
+                }
+                disabled={uploading}
+                className="mr-2 flex-1 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5"
+              >
+                <View className="h-12 w-12 items-center justify-center rounded-full bg-white">
+                  <ImageIcon
+                    size={23}
+                    color="#0f172a"
+                  />
+                </View>
+
+                <Text className="mt-3 font-bold text-slate-900">
+                  Gallery
+                </Text>
+
+                <Text className="mt-1 text-center text-xs text-slate-500">
+                  Choose an existing receipt
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() =>
+                  takeReceiptPhoto(
+                    pickerPeriodId
+                  )
+                }
+                disabled={uploading}
+                className="ml-2 flex-1 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5"
+              >
+                <View className="h-12 w-12 items-center justify-center rounded-full bg-white">
+                  <Camera
+                    size={23}
+                    color="#0f172a"
+                  />
+                </View>
+
+                <Text className="mt-3 font-bold text-slate-900">
+                  Camera
+                </Text>
+
+                <Text className="mt-1 text-center text-xs text-slate-500">
+                  Take a receipt photo
+                </Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={closeReceiptPicker}
+              className="mt-4 items-center py-3"
+            >
+              <Text className="font-semibold text-slate-500">
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
