@@ -47,4 +47,25 @@ const upload = multer({
   },
 });
 
-export const uploadReceipt = upload.single("receipt");
+export const uploadReceipt = (req, res, next) => {
+  console.log("=== RECEIPT UPLOAD DEBUG ===");
+  console.log("Content-Type:", req.headers["content-type"]);
+  console.log("Content-Length:", req.headers["content-length"]);
+
+  upload.single("receipt")(req, res, (err) => {
+    if (err) {
+      console.error("MULTER ERROR:", err.message);
+
+      return res.status(err.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
+    console.log("Uploaded file:", req.file);
+    console.log("Request body:", req.body);
+    console.log("============================");
+
+    next();
+  });
+};

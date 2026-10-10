@@ -26,8 +26,23 @@ const router = express.Router();
 // POST /api/payment-periods/:periodId/receipts
 router.post(
   "/payment-periods/:periodId/receipts",
+  (req, res, next) => {
+    console.log("1. RECEIPT ROUTE REACHED");
+    next();
+  },
   protect,
+  (req, res, next) => {
+    console.log("2. AUTHENTICATION PASSED");
+    next();
+  },
   uploadReceiptFile,
+  (req, res, next) => {
+    console.log("3. UPLOAD MIDDLEWARE PASSED");
+    console.log("Uploaded file:", req.file);
+    next();
+
+    
+  },
   uploadReceipt
 );
 
