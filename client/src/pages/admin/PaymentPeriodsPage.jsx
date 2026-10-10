@@ -110,7 +110,7 @@ setLoading(true);
 
   setError("");
 
-  const response = await api.get(`/equbs/${equbId}/periods`);
+const response = await api.get(`/equbs/${equbId}/periods`);
 
   setData(response.data);
 } catch (err) {

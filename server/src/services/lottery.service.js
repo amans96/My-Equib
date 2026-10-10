@@ -128,11 +128,10 @@ export const getLottery = async (periodId) => {
  * Removing a member marks their lottery entries as
  * eligible=false instead of deleting them.
  */
+
 export const getLotteryMembers = async (periodId) => {
   const period = await prisma.paymentPeriod.findUnique({
-    where: {
-      id: periodId,
-    },
+    where: { id: periodId },
     select: {
       id: true,
       equbId: true,
@@ -147,15 +146,12 @@ export const getLotteryMembers = async (periodId) => {
 
   const { lottery } = await getLottery(periodId);
 
-  /*
-   * Get every active member of this Equb.
-   */
+  // 1. Load all active members of this Equb.
   const memberships = await prisma.equbMembership.findMany({
     where: {
       equbId: period.equbId,
       status: "ACTIVE",
     },
-
     include: {
       user: {
         select: {
@@ -165,13 +161,44 @@ export const getLotteryMembers = async (periodId) => {
           profileImage: true,
         },
       },
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
 
-      payments: {
-        where: {
-          periodId,
+  // Return early if there are no active members.
+  if (memberships.length === 0) {
+    return {
+      period,
+      lottery,
+      members: [],
+    };
+  }
+
+  // 2. Find payment allocations belonging to THIS period
+  // and these memberships. PaymentAllocation connects the
+  // payment to its payment period.
+  const membershipIds = memberships.map(
+    (membership) => membership.id
+  );
+
+  const allocations = await prisma.paymentAllocation.findMany({
+    where: {
+      periodId,
+      payment: {
+        membershipId: {
+          in: membershipIds,
         },
+      },
+    },
+    select: {
+      amount: true,
+      createdAt: true,
+      payment: {
         select: {
           id: true,
+          membershipId: true,
           status: true,
           paidAmount: true,
           expectedAmount: true,
@@ -179,86 +206,69 @@ export const getLotteryMembers = async (periodId) => {
         },
       },
     },
-
     orderBy: {
-      createdAt: "asc",
+      createdAt: "desc",
     },
   });
 
-  /*
-   * Map EVERY active member.
-   */
-  const members = memberships.map((membership) => {
-    const payment = membership.payments[0] || null;
+  // 3. Group allocations by membership.
+  const allocationsByMembership = new Map();
 
-    /*
-     * Find all entries belonging to this member.
-     *
-     * lottery.entries contains the currently eligible entries
-     * because getOrCreateLottery() intentionally loads:
-     *
-     * eligible: true
-     */
- const memberEntries = (lottery?.entries || []).filter(
-  (entry) => entry.membershipId === membership.id
-);
+  for (const allocation of allocations) {
+    const membershipId = allocation.payment.membershipId;
+
+    if (!allocationsByMembership.has(membershipId)) {
+      allocationsByMembership.set(membershipId, []);
+    }
+
+    allocationsByMembership.get(membershipId).push(allocation);
+  }
+
+  // 4. Map every active member and their lottery status.
+  const members = memberships.map((membership) => {
+    const memberAllocations =
+      allocationsByMembership.get(membership.id) || [];
+
+    // Prefer a verified payment for this period.
+    // Otherwise, use the most recently created allocation.
+    const selectedAllocation =
+      memberAllocations.find(
+        (allocation) => allocation.payment.status === "VERIFIED"
+      ) || memberAllocations[0] || null;
+
+    const payment = selectedAllocation?.payment || null;
+
+    // Find this member's existing lottery entries.
+    const memberEntries = (lottery?.entries || []).filter(
+      (entry) => entry.membershipId === membership.id
+    );
 
     const ticketCount = memberEntries.length;
 
-    /*
-     * A member is currently eligible if they have at least
-     * one active lottery entry.
-     */
     const lotteryEligible = ticketCount > 0;
 
-    /*
-     * Calculate how many tickets this member would receive
-     * if made eligible.
-     */
     const possibleTicketCount = calculateTicketCount(
       membership.shares
     );
 
     return {
       membershipId: membership.id,
-
       userId: membership.userId,
-
       memberNumber: membership.memberNumber,
 
       firstName: membership.user.firstName,
-
       lastName: membership.user.lastName,
-
       profileImage: membership.user.profileImage,
 
       shares: Number(membership.shares),
 
-      /*
-       * Number of tickets currently in the lottery pool.
-       */
       ticketCount,
-
-      /*
-       * Number of tickets this member would have based
-       * on their shares.
-       */
       possibleTicketCount,
-
-      /*
-       * Current lottery state.
-       */
       lotteryEligible,
 
-      /*
-       * Whether they qualify for automatic entry.
-       */
       automaticallyEligible:
         payment?.status === "VERIFIED",
 
-      /*
-       * Payment information for the admin.
-       */
       payment: payment
         ? {
             id: payment.id,
@@ -266,14 +276,11 @@ export const getLotteryMembers = async (periodId) => {
             paidAmount: payment.paidAmount,
             expectedAmount: payment.expectedAmount,
             referenceNumber: payment.referenceNumber,
+            allocatedAmount: selectedAllocation.amount,
           }
         : null,
 
-      /*
-       * AUTOMATIC or MANUAL when currently eligible.
-       */
-      entryType:
-        memberEntries[0]?.entryType || null,
+      entryType: memberEntries[0]?.entryType || null,
     };
   });
 
@@ -283,6 +290,7 @@ export const getLotteryMembers = async (periodId) => {
     members,
   };
 };
+
 
 /*
  * Generate sequential ticket numbers.
@@ -316,18 +324,19 @@ const getNextTicketNumber = async (lotteryId) => {
  * - automatically verified members
  * - manually added members
  */
+
 export const addMemberToLottery = async ({
   periodId,
   membershipId,
   entryType = "MANUAL",
 }) => {
-const { lottery } = await getLottery(periodId);
+  const { period, lottery } = await getLottery(periodId);
 
-if (!lottery) {
-  throw new Error("Lottery has not been prepared yet");
-}
+  if (!lottery) {
+    throw new Error("Lottery has not been prepared yet");
+  }
 
-if (lottery.status === "RUNNING") {
+  if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
   }
 
@@ -352,15 +361,6 @@ if (lottery.status === "RUNNING") {
           id: true,
         },
       },
-      payments: {
-        where: {
-          periodId,
-        },
-        select: {
-          id: true,
-          status: true,
-        },
-      },
     },
   });
 
@@ -368,7 +368,7 @@ if (lottery.status === "RUNNING") {
     throw new Error("Membership not found");
   }
 
-  if (membership.equb.id !== lottery.equbId) {
+  if (membership.equb.id !== period.equbId) {
     throw new Error("Member does not belong to this Equb");
   }
 
@@ -376,18 +376,30 @@ if (lottery.status === "RUNNING") {
     throw new Error("Only active members can enter the lottery");
   }
 
-  /*
-   * If this is an automatic entry, payment must be verified.
-   *
-   * Manual entries can bypass this requirement because
-   * the admin explicitly added the member.
-   */
+  // Automatic entries require a verified payment allocated
+  // to this exact payment period.
   if (entryType === "AUTOMATIC") {
-    const payment = membership.payments[0];
+    const allocation = await prisma.paymentAllocation.findFirst({
+      where: {
+        periodId,
+        payment: {
+          membershipId,
+          status: "VERIFIED",
+        },
+      },
+      select: {
+        payment: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
+    });
 
-    if (!payment || payment.status !== "VERIFIED") {
+    if (!allocation || allocation.payment.status !== "VERIFIED") {
       throw new Error(
-        "Member must have a verified payment to be added automatically"
+        "Member must have a verified payment for this period to be added automatically"
       );
     }
   }
@@ -403,16 +415,11 @@ if (lottery.status === "RUNNING") {
     },
   });
 
-  /*
-   * If the member is already in the pool, don't create
-   * duplicate tickets.
-   */
   if (existingEntries.length > 0) {
     throw new Error("Member is already in the lottery pool");
   }
 
   const ticketCount = calculateTicketCount(membership.shares);
-
   const entries = [];
 
   for (let i = 0; i < ticketCount; i++) {
@@ -432,27 +439,7 @@ if (lottery.status === "RUNNING") {
     entries.push(entry);
   }
 
-  await prisma.lotteryDraw.update({
-    where: {
-      id: lottery.id,
-    },
-    data: {
-      participantCount: await prisma.lotteryEntry.groupBy({
-        by: ["membershipId"],
-        where: {
-          lotteryId: lottery.id,
-          eligible: true,
-        },
-      }).then((groups) => groups.length),
-
-      totalEntries: await prisma.lotteryEntry.count({
-        where: {
-          lotteryId: lottery.id,
-          eligible: true,
-        },
-      }),
-    },
-  });
+  await updateLotteryCounts(lottery.id);
 
   return {
     membership,
@@ -460,6 +447,7 @@ if (lottery.status === "RUNNING") {
     entries,
   };
 };
+
 
 /*
  * Remove a member from the current lottery pool.
@@ -614,10 +602,13 @@ const updateLotteryCounts = async (lotteryId) => {
  * This automatically adds all members whose payment
  * for this period is VERIFIED.
  */
+
 export const prepareLottery = async (periodId) => {
   // 1. Find the payment period.
   const period = await prisma.paymentPeriod.findUnique({
-    where: { id: periodId },
+    where: {
+      id: periodId,
+    },
     select: {
       id: true,
       equbId: true,
@@ -629,8 +620,7 @@ export const prepareLottery = async (periodId) => {
     throw new Error("Payment period not found");
   }
 
-  // 2. Create the lottery if it doesn't exist.
-  // If it already exists, reuse it.
+  // 2. Create the lottery if it does not exist.
   const lottery = await prisma.lotteryDraw.upsert({
     where: {
       periodId,
@@ -644,7 +634,7 @@ export const prepareLottery = async (periodId) => {
     },
   });
 
-  // 3. Prevent modifications after the lottery starts.
+  // 3. Prevent modifications after the draw starts or finishes.
   if (lottery.status === "RUNNING") {
     throw new Error("Lottery is already running");
   }
@@ -653,31 +643,64 @@ export const prepareLottery = async (periodId) => {
     throw new Error("Lottery has already been completed");
   }
 
-  // 4. Find active members who have verified payments.
+  // 4. Get all active memberships in this Equb.
   const memberships = await prisma.equbMembership.findMany({
     where: {
       equbId: period.equbId,
       status: "ACTIVE",
-      payments: {
-        some: {
-          periodId,
-          status: "VERIFIED",
-        },
-      },
     },
     select: {
       id: true,
     },
   });
 
+  const membershipIds = memberships.map(
+    (membership) => membership.id
+  );
+
+  // 5. Find verified payments allocated to this exact period.
+  // PaymentAllocation is the relationship between payments
+  // and payment periods.
+  const allocations =
+    membershipIds.length > 0
+      ? await prisma.paymentAllocation.findMany({
+          where: {
+            periodId,
+            payment: {
+              membershipId: {
+                in: membershipIds,
+              },
+              status: "VERIFIED",
+            },
+          },
+          select: {
+            payment: {
+              select: {
+                membershipId: true,
+              },
+            },
+          },
+        })
+      : [];
+
+  // A member may have more than one allocation/payment,
+  // so only process each membership once.
+  const eligibleMembershipIds = [
+    ...new Set(
+      allocations.map(
+        (allocation) => allocation.payment.membershipId
+      )
+    ),
+  ];
+
   let addedMembers = 0;
 
-  // 5. Add each eligible member without duplicating entries.
-  for (const membership of memberships) {
+  // 6. Add verified members who are not already in the pool.
+  for (const eligibleMembershipId of eligibleMembershipIds) {
     const existingEntry = await prisma.lotteryEntry.findFirst({
       where: {
         lotteryId: lottery.id,
-        membershipId: membership.id,
+        membershipId: eligibleMembershipId,
         eligible: true,
       },
       select: {
@@ -685,25 +708,23 @@ export const prepareLottery = async (periodId) => {
       },
     });
 
-    // This member has already been added.
     if (existingEntry) {
       continue;
     }
 
-    // Add the member and generate tickets based on their shares.
     await addMemberToLottery({
       periodId,
-      membershipId: membership.id,
+      membershipId: eligibleMembershipId,
       entryType: "AUTOMATIC",
     });
 
     addedMembers++;
   }
 
-  // 6. Update participant and ticket counts.
+  // 7. Update lottery statistics.
   await updateLotteryCounts(lottery.id);
 
-  // 7. Mark the lottery as ready.
+  // 8. Mark the lottery as ready.
   await prisma.lotteryDraw.update({
     where: {
       id: lottery.id,
@@ -713,7 +734,7 @@ export const prepareLottery = async (periodId) => {
     },
   });
 
-  // 8. Return the updated lottery.
+  // 9. Return the latest lottery data.
   const result = await getLottery(periodId);
 
   return {
@@ -721,6 +742,7 @@ export const prepareLottery = async (periodId) => {
     addedMembers,
   };
 };
+
 
 /*
  * Start the lottery.

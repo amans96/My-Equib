@@ -1066,23 +1066,63 @@ export const getEqubPeriods = async (req, res) => {
 
     const periodIds = periods.map((period) => period.id);
 
-    const paymentStatistics = await prisma.payment.groupBy({
-      by: ["periodId", "status"],
 
-      where: {
-        periodId: {
-          in: periodIds,
-        },
-      },
-
-      _count: {
-        _all: true,
-      },
-
-      _sum: {
+const allocations = await prisma.paymentAllocation.findMany({
+  where: {
+    periodId: {
+      in: periodIds,
+    },
+  },
+  select: {
+    periodId: true,
+    amount: true,
+    payment: {
+      select: {
+        status: true,
         paidAmount: true,
       },
-    });
+    },
+  },
+});
+
+const statisticsByPeriod = new Map();
+
+for (const periodId of periodIds) {
+  statisticsByPeriod.set(periodId, {
+    paymentCount: 0,
+    verifiedPaymentCount: 0,
+    pendingPaymentCount: 0,
+    totalCollected: 0,
+  });
+}
+
+for (const allocation of allocations) {
+  const statistics = statisticsByPeriod.get(
+    allocation.periodId
+  );
+
+  if (!statistics) continue;
+
+  const payment = allocation.payment;
+
+  statistics.paymentCount += 1;
+
+  if (payment.status === "VERIFIED") {
+    statistics.verifiedPaymentCount += 1;
+
+    // Count only the amount allocated to this period.
+    statistics.totalCollected += Number(allocation.amount);
+  }
+
+  if (
+    payment.status === "PENDING" ||
+    payment.status === "SUBMITTED" ||
+    payment.status === "UNDER_REVIEW" ||
+    payment.status === "NEEDS_REVIEW"
+  ) {
+    statistics.pendingPaymentCount += 1;
+  }
+}
 
     // --------------------------------------------------
     // 7. Organize statistics by period
@@ -1099,44 +1139,10 @@ export const getEqubPeriods = async (req, res) => {
     // }
     // --------------------------------------------------
 
-    const statisticsByPeriod = new Map();
+    
+      
 
-    for (const row of paymentStatistics) {
-      if (!statisticsByPeriod.has(row.periodId)) {
-        statisticsByPeriod.set(row.periodId, {
-          paymentCount: 0,
-          verifiedPaymentCount: 0,
-          pendingPaymentCount: 0,
-          totalCollected: 0,
-        });
-      }
-
-      const statistics = statisticsByPeriod.get(row.periodId);
-
-      const count = row._count._all;
-
-      // Total number of payments
-      statistics.paymentCount += count;
-
-      // Verified payments
-      if (row.status === "VERIFIED") {
-        statistics.verifiedPaymentCount += count;
-
-        statistics.totalCollected += Number(
-          row._sum.paidAmount || 0
-        );
-      }
-
-      // Pending/review payments
-      if (
-        row.status === "PENDING" ||
-        row.status === "SUBMITTED" ||
-        row.status === "UNDER_REVIEW" ||
-        row.status === "NEEDS_REVIEW"
-      ) {
-        statistics.pendingPaymentCount += count;
-      }
-    }
+     
 
     // --------------------------------------------------
     // 8. Format periods
@@ -1254,15 +1260,21 @@ export const getEqubPeriods = async (req, res) => {
       periods: formattedPeriods,
     });
   } catch (error) {
-    console.error("Get Equb Periods Error:", error);
+    console.error("\n========== GET EQUB PERIODS ERROR ==========");
+    console.error("Message:", error?.message);
+    console.error("Code:", error?.code);
+    console.error("Meta:", error?.meta);
+    console.error("Stack:", error?.stack);
+    console.error("============================================\n");
 
     return res.status(500).json({
       success: false,
       message: "Failed to fetch Equb payment periods",
+      error: error?.message || "Unknown server error",
+      code: error?.code || null,
     });
   }
 };
-
 
 export const getMyEqubPeriods = async (req, res) => {
   try {
@@ -1439,13 +1451,10 @@ export const getMyEqubPeriods = async (req, res) => {
         paymentStatus = payment.status;
       }
 
-      const canUploadReceipt =
-        period.status === "OPEN" &&
-        (
-          !payment ||
-          payment.status === "REJECTED" ||
-          payment.status === "NEEDS_REVIEW"
-        );
+   const canUploadReceipt =
+  !payment ||
+  payment.status === "REJECTED" ||
+  payment.status === "NEEDS_REVIEW";
 
       return {
         id: period.id,
@@ -1619,3 +1628,4 @@ export const getMyEqubPeriods = async (req, res) => {
     });
   }
 };
+
