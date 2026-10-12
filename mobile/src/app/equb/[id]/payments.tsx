@@ -101,6 +101,29 @@ const NORMALIZED_PENDING_STATUSES = [
   "UNDER_REVIEW",
   "NEEDS_REVIEW",
 ];
+const canUploadToPeriod = (period: PaymentPeriod) => {
+  if (period.status?.toUpperCase() !== "OPEN") {
+    return false;
+  }
+
+  const paymentStatus = (
+    period.paymentStatus || period.payment?.status || ""
+  ).toUpperCase();
+
+  // Never upload again after a verified payment.
+  if (paymentStatus === "VERIFIED") {
+    return false;
+  }
+
+  // Existing submissions must be rejected or marked for review
+  // before the member can submit another receipt.
+  if (period.payment) {
+    return ["REJECTED", "NEEDS_REVIEW"].includes(paymentStatus);
+  }
+
+  // No payment exists, and the period is open.
+  return true;
+};
 
 export default function PaymentsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -206,20 +229,20 @@ export default function PaymentsScreen() {
   // Receipt picker
   // --------------------------------------------------
 
-  const openReceiptPicker = (periodId: string) => {
-    const period = periods.find((item) => item.id === periodId);
+const openReceiptPicker = (periodId: string) => {
+  const period = periods.find((item) => item.id === periodId);
 
-    if (!period || !period.canUploadReceipt) {
-      Alert.alert(
-        "Upload unavailable",
-        "A receipt cannot be uploaded for this period in its current payment state."
-      );
-      return;
-    }
+  if (!period || !canUploadToPeriod(period)) {
+    Alert.alert(
+      "Upload unavailable",
+      "You can upload a receipt only when this payment period is open and eligible for payment."
+    );
+    return;
+  }
 
-    setSelectedPeriodId(periodId);
-    setPickerPeriodId(periodId);
-  };
+  setSelectedPeriodId(periodId);
+  setPickerPeriodId(periodId);
+};
 
   const closeReceiptPicker = () => {
     if (!uploading) {
@@ -227,80 +250,136 @@ export default function PaymentsScreen() {
     }
   };
 
-  const pickReceipt = async (periodId: string) => {
-    try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+const pickReceipt = async (periodId: string) => {
+  try {
+    const period = periods.find((item) => item.id === periodId);
 
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission required",
-          "Please allow photo library access to upload your receipt."
-        );
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.8,
-      });
-
-      if (result.canceled) {
-        return;
-      }
-
-      const asset = result.assets[0];
-
-      setSelectedPeriodId(periodId);
-      setSelectedReceipt({
-        uri: asset.uri,
-        name: asset.fileName || `receipt-${Date.now()}.jpg`,
-        type: asset.mimeType || "image/jpeg",
-      });
-
+    if (!period || !canUploadToPeriod(period)) {
+      Alert.alert(
+        "Upload unavailable",
+        "This payment period is not open for receipt uploads."
+      );
       setPickerPeriodId(null);
-    } catch {
-      Alert.alert("Error", "Could not select the receipt image.");
+      return;
     }
-  };
 
-  const takeReceiptPhoto = async (periodId: string) => {
-    try {
-      const permission =
-        await ImagePicker.requestCameraPermissionsAsync();
+    const permission =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission required",
-          "Please allow camera access to take a receipt photo."
-        );
-        return;
-      }
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Please allow photo library access to upload your receipt."
+      );
+      return;
+    }
 
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        quality: 0.8,
-      });
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      quality: 0.8,
+    });
 
-      if (result.canceled) {
-        return;
-      }
+    if (result.canceled || !result.assets?.length) {
+      return;
+    }
 
-      const asset = result.assets[0];
+    const asset = result.assets[0];
+    const uri = asset.uri;
 
-      setSelectedPeriodId(periodId);
-      setSelectedReceipt({
-        uri: asset.uri,
-        name: asset.fileName || `receipt-${Date.now()}.jpg`,
-        type: asset.mimeType || "image/jpeg",
-      });
+    const extension = uri
+      .split("?")[0]
+      .split(".")
+      .pop()
+      ?.toLowerCase();
 
+    const mimeType =
+      asset.mimeType?.toLowerCase() ||
+      (extension === "png"
+        ? "image/png"
+        : extension === "webp"
+          ? "image/webp"
+          : "image/jpeg");
+
+    if (
+      !["image/jpeg", "image/png", "image/webp"].includes(mimeType)
+    ) {
+      Alert.alert(
+        "Unsupported image",
+        "Please select a JPG, PNG, or WEBP receipt image."
+      );
+      return;
+    }
+
+    const fileExtension =
+      mimeType === "image/png"
+        ? "png"
+        : mimeType === "image/webp"
+          ? "webp"
+          : "jpg";
+
+    setSelectedReceipt({
+      uri,
+      name: `receipt-${Date.now()}.${fileExtension}`,
+      type: mimeType,
+    });
+
+    setSelectedPeriodId(periodId);
+    setPickerPeriodId(null);
+  } catch (error) {
+    console.error("Select receipt error:", error);
+    Alert.alert("Error", "Could not select the receipt image.");
+  }
+};
+
+const takeReceiptPhoto = async (periodId: string) => {
+  try {
+    const period = periods.find((item) => item.id === periodId);
+
+    if (!period || !canUploadToPeriod(period)) {
+      Alert.alert(
+        "Upload unavailable",
+        "This payment period is not open for receipt uploads."
+      );
       setPickerPeriodId(null);
-    } catch {
-      Alert.alert("Error", "Could not take the receipt photo.");
+      return;
     }
-  };
+
+    const permission =
+      await ImagePicker.requestCameraPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Please allow camera access to take a receipt photo."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (result.canceled || !result.assets?.length) {
+      return;
+    }
+
+    const asset = result.assets[0];
+
+    setSelectedReceipt({
+      uri: asset.uri,
+      name: `receipt-${Date.now()}.jpg`,
+      type: "image/jpeg",
+    });
+
+    setSelectedPeriodId(periodId);
+    setPickerPeriodId(null);
+  } catch (error) {
+    console.error("Take receipt photo error:", error);
+    Alert.alert("Error", "Could not take the receipt photo.");
+  }
+};
 
   const removeSelectedReceipt = () => {
     if (uploading) {
@@ -315,83 +394,91 @@ export default function PaymentsScreen() {
   // Upload receipt for the selected payment period
   // --------------------------------------------------
 
-  const uploadReceipt = async (periodId: string) => {
-    if (!selectedReceipt) {
-      Alert.alert(
-        "Receipt required",
-        "Please select or take a photo of your payment receipt."
-      );
-      return;
-    }
+const uploadReceipt = async (periodId: string) => {
+  if (!selectedReceipt) {
+    Alert.alert(
+      "Receipt required",
+      "Please select or take a photo of your payment receipt."
+    );
+    return;
+  }
 
-    if (selectedPeriodId !== periodId) {
-      Alert.alert(
-        "Period mismatch",
-        "Please select a receipt for this payment period."
-      );
-      return;
-    }
+  if (selectedPeriodId !== periodId) {
+    Alert.alert(
+      "Period mismatch",
+      "Please select a receipt for this payment period."
+    );
+    return;
+  }
 
-    const period = periods.find((item) => item.id === periodId);
+  const period = periods.find((item) => item.id === periodId);
 
-    if (!period || !period.canUploadReceipt) {
-      Alert.alert(
-        "Upload unavailable",
-        "This period is no longer eligible for a receipt upload. Refresh your payments and try again."
-      );
+  if (!period || !canUploadToPeriod(period)) {
+    Alert.alert(
+      "Upload unavailable",
+      "This period is not open for receipt uploads. Refresh your payments and try again."
+    );
 
-      await loadPaymentData();
-      return;
-    }
+    await loadPaymentData();
+    return;
+  }
 
-    try {
-      setUploading(true);
-      setUploadingPeriodId(periodId);
-      setErrorMessage("");
+  try {
+    setUploading(true);
+    setUploadingPeriodId(periodId);
+    setErrorMessage("");
 
-      const formData = new FormData();
+    const formData = new FormData();
 
-      formData.append(
-        "receipt",
-        {
-          uri: selectedReceipt.uri,
-          name: selectedReceipt.name,
-          type: selectedReceipt.type,
-        } as any
-      );
+    formData.append(
+      "receipt",
+      {
+        uri: selectedReceipt.uri,
+        name: selectedReceipt.name,
+        type: selectedReceipt.type,
+      } as any
+    );
 
-      await apiRequest(
-        `/payment-periods/${periodId}/receipts`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+    console.log("Receipt upload starting:", {
+      periodId,
+      fileName: selectedReceipt.name,
+      mimeType: selectedReceipt.type,
+      hasUri: Boolean(selectedReceipt.uri),
+    });
 
-      setSelectedReceipt(null);
-      setSelectedPeriodId(null);
-      setPickerPeriodId(null);
+    await apiRequest(
+      `/payment-periods/${periodId}/receipts`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
 
-      Alert.alert(
-        "Receipt submitted",
-        `Your receipt for Period ${period.periodNumber} has been uploaded successfully and is waiting for verification.`
-      );
+    setSelectedReceipt(null);
+    setSelectedPeriodId(null);
+    setPickerPeriodId(null);
 
-      await loadPaymentData();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to upload receipt.";
+    Alert.alert(
+      "Receipt submitted",
+      `Your receipt for Period ${period.periodNumber} has been uploaded successfully and is waiting for verification.`
+    );
 
-      setErrorMessage(message);
+    await loadPaymentData();
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to upload receipt.";
 
-      Alert.alert("Upload failed", message);
-    } finally {
-      setUploading(false);
-      setUploadingPeriodId(null);
-    }
-  };
+    console.error("Receipt upload failed:", message);
+
+    setErrorMessage(message);
+    Alert.alert("Upload failed", message);
+  } finally {
+    setUploading(false);
+    setUploadingPeriodId(null);
+  }
+};
 
   // --------------------------------------------------
   // Helpers
@@ -474,9 +561,9 @@ export default function PaymentsScreen() {
   const selectedPeriod =
     periods.find((period) => period.id === selectedPeriodId) || null;
 
-  const openPeriods = periods.filter(
-    (period) => period.status === "OPEN"
-  );
+const openPeriods = periods.filter(
+  (period) => period.status?.toUpperCase() === "OPEN"
+);
 
   const currentPeriod =
     openPeriods.find(
@@ -672,7 +759,7 @@ export default function PaymentsScreen() {
                 </Text>
               )}
 
-              {currentPeriod.canUploadReceipt ? (
+             {canUploadToPeriod(currentPeriod) ? (
                 <Pressable
                   onPress={() => openReceiptPicker(currentPeriod.id)}
                   className="mt-5 flex-row items-center justify-center rounded-xl bg-white py-3"
@@ -728,7 +815,7 @@ export default function PaymentsScreen() {
 
                 // Eligibility is determined by the backend.
                 // Do not require period.status === "OPEN" here.
-                const canUpload = period.canUploadReceipt === true;
+           const canUpload = canUploadToPeriod(period);
 
                 const statusClasses = getPaymentStatusClasses(period);
                 const isSelected = selectedPeriodId === period.id;
@@ -845,7 +932,7 @@ export default function PaymentsScreen() {
                           Waiting for verification
                         </Text>
                       </View>
-                    ) : null}
+                    ) : null}canUploadToPeriod 
 
                     {/* Receipt preview */}
 

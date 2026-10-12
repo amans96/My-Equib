@@ -1,7 +1,7 @@
 
 import { getToken } from "./storage";
 
-const API_URL = "http://10.178.128.65:5000/api";;
+const API_URL = "http://10.178.128.65:5000/api";
 
 export async function apiRequest<T>(
   endpoint: string,
@@ -9,22 +9,19 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const token = await getToken();
 
-  const isFormData = options.body instanceof FormData;
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
 
   const headers = new Headers(options.headers);
 
-  // JSON requests need Content-Type.
-  // FormData must NOT manually set Content-Type because
-  // fetch needs to add the multipart boundary automatically.
-  if (!isFormData) {
-    headers.set("Content-Type", "application/json");
-  } else {
+  // Let fetch set the multipart boundary for receipt uploads.
+  if (isFormData) {
     headers.delete("Content-Type");
+  } else if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
 
-  // Attach token when available.
-  // Login/register requests do not have a token yet,
-  // so they are still allowed to continue.
+  // Attach the authentication token when available.
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
