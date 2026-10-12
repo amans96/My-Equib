@@ -4,6 +4,8 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -93,6 +95,7 @@ type ReceiptState = {
   uri: string;
   name: string;
   type: string;
+  file?: any;
 };
 
 const NORMALIZED_PENDING_STATUSES = [
@@ -102,7 +105,7 @@ const NORMALIZED_PENDING_STATUSES = [
   "NEEDS_REVIEW",
 ];
 const canUploadToPeriod = (period: PaymentPeriod) => {
-  if (period.status?.toUpperCase() !== "OPEN") {
+  if (period.status?.toUpperCase() === "CLOSED") {
     return false;
   }
 
@@ -110,8 +113,13 @@ const canUploadToPeriod = (period: PaymentPeriod) => {
     period.paymentStatus || period.payment?.status || ""
   ).toUpperCase();
 
-  // Never upload again after a verified payment.
-  if (paymentStatus === "VERIFIED") {
+  // Never upload again after a verified payment or while waiting under review.
+  if (
+    paymentStatus === "VERIFIED" ||
+    paymentStatus === "PENDING" ||
+    paymentStatus === "SUBMITTED" ||
+    paymentStatus === "UNDER_REVIEW"
+  ) {
     return false;
   }
 
@@ -121,7 +129,11 @@ const canUploadToPeriod = (period: PaymentPeriod) => {
     return ["REJECTED", "NEEDS_REVIEW"].includes(paymentStatus);
   }
 
-  // No payment exists, and the period is open.
+  // If backend provided canUploadReceipt boolean, respect it
+  if (typeof period.canUploadReceipt === "boolean") {
+    return period.canUploadReceipt;
+  }
+
   return true;
 };
 
@@ -229,20 +241,20 @@ export default function PaymentsScreen() {
   // Receipt picker
   // --------------------------------------------------
 
-const openReceiptPicker = (periodId: string) => {
-  const period = periods.find((item) => item.id === periodId);
+  const openReceiptPicker = (periodId: string) => {
+    const period = periods.find((item) => item.id === periodId);
 
-  if (!period || !canUploadToPeriod(period)) {
-    Alert.alert(
-      "Upload unavailable",
-      "You can upload a receipt only when this payment period is open and eligible for payment."
-    );
-    return;
-  }
+    if (!period || !canUploadToPeriod(period)) {
+      Alert.alert(
+        "Upload unavailable",
+        "You can upload a receipt only when this payment period is open and eligible for payment."
+      );
+      return;
+    }
 
-  setSelectedPeriodId(periodId);
-  setPickerPeriodId(periodId);
-};
+    setSelectedPeriodId(periodId);
+    setPickerPeriodId(periodId);
+  };
 
   const closeReceiptPicker = () => {
     if (!uploading) {
@@ -250,136 +262,138 @@ const openReceiptPicker = (periodId: string) => {
     }
   };
 
-const pickReceipt = async (periodId: string) => {
-  try {
-    const period = periods.find((item) => item.id === periodId);
+  const pickReceipt = async (periodId: string) => {
+    try {
+      const period = periods.find((item) => item.id === periodId);
 
-    if (!period || !canUploadToPeriod(period)) {
-      Alert.alert(
-        "Upload unavailable",
-        "This payment period is not open for receipt uploads."
-      );
+      if (!period || !canUploadToPeriod(period)) {
+        Alert.alert(
+          "Upload unavailable",
+          "This payment period is not open for receipt uploads."
+        );
+        setPickerPeriodId(null);
+        return;
+      }
+
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          "Permission required",
+          "Please allow photo library access to upload your receipt."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      const uri = asset.uri;
+
+      const extension = uri
+        .split("?")[0]
+        .split(".")
+        .pop()
+        ?.toLowerCase();
+
+      const mimeType =
+        asset.mimeType?.toLowerCase() ||
+        (extension === "png"
+          ? "image/png"
+          : extension === "webp"
+            ? "image/webp"
+            : "image/jpeg");
+
+      if (
+        !["image/jpeg", "image/png", "image/webp"].includes(mimeType)
+      ) {
+        Alert.alert(
+          "Unsupported image",
+          "Please select a JPG, PNG, or WEBP receipt image."
+        );
+        return;
+      }
+
+      const fileExtension =
+        mimeType === "image/png"
+          ? "png"
+          : mimeType === "image/webp"
+            ? "webp"
+            : "jpg";
+
+      setSelectedReceipt({
+        uri,
+        name: asset.fileName || `receipt-${Date.now()}.${fileExtension}`,
+        type: mimeType,
+        file: (asset as any).file,
+      });
+
+      setSelectedPeriodId(periodId);
       setPickerPeriodId(null);
-      return;
+    } catch (error) {
+      console.error("Select receipt error:", error);
+      Alert.alert("Error", "Could not select the receipt image.");
     }
+  };
 
-    const permission =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const takeReceiptPhoto = async (periodId: string) => {
+    try {
+      const period = periods.find((item) => item.id === periodId);
 
-    if (!permission.granted) {
-      Alert.alert(
-        "Permission required",
-        "Please allow photo library access to upload your receipt."
-      );
-      return;
-    }
+      if (!period || !canUploadToPeriod(period)) {
+        Alert.alert(
+          "Upload unavailable",
+          "This payment period is not open for receipt uploads."
+        );
+        setPickerPeriodId(null);
+        return;
+      }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: true,
-      quality: 0.8,
-    });
+      const permission =
+        await ImagePicker.requestCameraPermissionsAsync();
 
-    if (result.canceled || !result.assets?.length) {
-      return;
-    }
+      if (!permission.granted) {
+        Alert.alert(
+          "Permission required",
+          "Please allow camera access to take a receipt photo."
+        );
+        return;
+      }
 
-    const asset = result.assets[0];
-    const uri = asset.uri;
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        quality: 0.8,
+      });
 
-    const extension = uri
-      .split("?")[0]
-      .split(".")
-      .pop()
-      ?.toLowerCase();
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
 
-    const mimeType =
-      asset.mimeType?.toLowerCase() ||
-      (extension === "png"
-        ? "image/png"
-        : extension === "webp"
-          ? "image/webp"
-          : "image/jpeg");
+      const asset = result.assets[0];
 
-    if (
-      !["image/jpeg", "image/png", "image/webp"].includes(mimeType)
-    ) {
-      Alert.alert(
-        "Unsupported image",
-        "Please select a JPG, PNG, or WEBP receipt image."
-      );
-      return;
-    }
+      setSelectedReceipt({
+        uri: asset.uri,
+        name: asset.fileName || `receipt-${Date.now()}.jpg`,
+        type: "image/jpeg",
+        file: (asset as any).file,
+      });
 
-    const fileExtension =
-      mimeType === "image/png"
-        ? "png"
-        : mimeType === "image/webp"
-          ? "webp"
-          : "jpg";
-
-    setSelectedReceipt({
-      uri,
-      name: `receipt-${Date.now()}.${fileExtension}`,
-      type: mimeType,
-    });
-
-    setSelectedPeriodId(periodId);
-    setPickerPeriodId(null);
-  } catch (error) {
-    console.error("Select receipt error:", error);
-    Alert.alert("Error", "Could not select the receipt image.");
-  }
-};
-
-const takeReceiptPhoto = async (periodId: string) => {
-  try {
-    const period = periods.find((item) => item.id === periodId);
-
-    if (!period || !canUploadToPeriod(period)) {
-      Alert.alert(
-        "Upload unavailable",
-        "This payment period is not open for receipt uploads."
-      );
+      setSelectedPeriodId(periodId);
       setPickerPeriodId(null);
-      return;
+    } catch (error) {
+      console.error("Take receipt photo error:", error);
+      Alert.alert("Error", "Could not take the receipt photo.");
     }
-
-    const permission =
-      await ImagePicker.requestCameraPermissionsAsync();
-
-    if (!permission.granted) {
-      Alert.alert(
-        "Permission required",
-        "Please allow camera access to take a receipt photo."
-      );
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      quality: 0.8,
-    });
-
-    if (result.canceled || !result.assets?.length) {
-      return;
-    }
-
-    const asset = result.assets[0];
-
-    setSelectedReceipt({
-      uri: asset.uri,
-      name: `receipt-${Date.now()}.jpg`,
-      type: "image/jpeg",
-    });
-
-    setSelectedPeriodId(periodId);
-    setPickerPeriodId(null);
-  } catch (error) {
-    console.error("Take receipt photo error:", error);
-    Alert.alert("Error", "Could not take the receipt photo.");
-  }
-};
+  };
 
   const removeSelectedReceipt = () => {
     if (uploading) {
@@ -394,91 +408,112 @@ const takeReceiptPhoto = async (periodId: string) => {
   // Upload receipt for the selected payment period
   // --------------------------------------------------
 
-const uploadReceipt = async (periodId: string) => {
-  if (!selectedReceipt) {
-    Alert.alert(
-      "Receipt required",
-      "Please select or take a photo of your payment receipt."
-    );
-    return;
-  }
+  const uploadReceipt = async (periodId: string) => {
+    if (!selectedReceipt) {
+      Alert.alert(
+        "Receipt required",
+        "Please select or take a photo of your payment receipt."
+      );
+      return;
+    }
 
-  if (selectedPeriodId !== periodId) {
-    Alert.alert(
-      "Period mismatch",
-      "Please select a receipt for this payment period."
-    );
-    return;
-  }
+    if (selectedPeriodId !== periodId) {
+      Alert.alert(
+        "Period mismatch",
+        "Please select a receipt for this payment period."
+      );
+      return;
+    }
 
-  const period = periods.find((item) => item.id === periodId);
+    const period = periods.find((item) => item.id === periodId);
 
-  if (!period || !canUploadToPeriod(period)) {
-    Alert.alert(
-      "Upload unavailable",
-      "This period is not open for receipt uploads. Refresh your payments and try again."
-    );
+    if (!period || !canUploadToPeriod(period)) {
+      Alert.alert(
+        "Upload unavailable",
+        "This period is not open for receipt uploads. Refresh your payments and try again."
+      );
 
-    await loadPaymentData();
-    return;
-  }
+      await loadPaymentData();
+      return;
+    }
 
-  try {
-    setUploading(true);
-    setUploadingPeriodId(periodId);
-    setErrorMessage("");
+    try {
+      setUploading(true);
+      setUploadingPeriodId(periodId);
+      setErrorMessage("");
 
-    const formData = new FormData();
+      const formData = new FormData();
 
-    formData.append(
-      "receipt",
-      {
-        uri: selectedReceipt.uri,
-        name: selectedReceipt.name,
-        type: selectedReceipt.type,
-      } as any
-    );
+      if (Platform.OS === "web") {
+        let fileToUpload: any = selectedReceipt.file;
 
-    console.log("Receipt upload starting:", {
-      periodId,
-      fileName: selectedReceipt.name,
-      mimeType: selectedReceipt.type,
-      hasUri: Boolean(selectedReceipt.uri),
-    });
+        if (!fileToUpload) {
+          const response = await fetch(selectedReceipt.uri);
+          const blob = await response.blob();
+          const mimeType =
+            selectedReceipt.type === "image/jpg"
+              ? "image/jpeg"
+              : selectedReceipt.type || blob.type || "image/jpeg";
 
-    await apiRequest(
-      `/payment-periods/${periodId}/receipts`,
-      {
-        method: "POST",
-        body: formData,
+          fileToUpload =
+            typeof File !== "undefined"
+              ? new File([blob], selectedReceipt.name, { type: mimeType })
+              : blob;
+        }
+
+        formData.append("receipt", fileToUpload, selectedReceipt.name);
+      } else {
+        formData.append(
+          "receipt",
+          {
+            uri: selectedReceipt.uri,
+            name: selectedReceipt.name,
+            type: selectedReceipt.type,
+          } as any
+        );
       }
-    );
 
-    setSelectedReceipt(null);
-    setSelectedPeriodId(null);
-    setPickerPeriodId(null);
+      console.log("Receipt upload starting:", {
+        platform: Platform.OS,
+        periodId,
+        fileName: selectedReceipt.name,
+        mimeType: selectedReceipt.type,
+        hasUri: Boolean(selectedReceipt.uri),
+      });
 
-    Alert.alert(
-      "Receipt submitted",
-      `Your receipt for Period ${period.periodNumber} has been uploaded successfully and is waiting for verification.`
-    );
+      await apiRequest(
+        `/payment-periods/${periodId}/receipts`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
-    await loadPaymentData();
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to upload receipt.";
+      setSelectedReceipt(null);
+      setSelectedPeriodId(null);
+      setPickerPeriodId(null);
 
-    console.error("Receipt upload failed:", message);
+      Alert.alert(
+        "Receipt submitted",
+        `Your receipt for Period ${period.periodNumber} has been uploaded successfully and is waiting for verification.`
+      );
 
-    setErrorMessage(message);
-    Alert.alert("Upload failed", message);
-  } finally {
-    setUploading(false);
-    setUploadingPeriodId(null);
-  }
-};
+      await loadPaymentData();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to upload receipt.";
+
+      console.error("Receipt upload failed:", message);
+
+      setErrorMessage(message);
+      Alert.alert("Upload failed", message);
+    } finally {
+      setUploading(false);
+      setUploadingPeriodId(null);
+    }
+  };
 
   // --------------------------------------------------
   // Helpers
@@ -561,20 +596,18 @@ const uploadReceipt = async (periodId: string) => {
   const selectedPeriod =
     periods.find((period) => period.id === selectedPeriodId) || null;
 
-const openPeriods = periods.filter(
-  (period) => period.status?.toUpperCase() === "OPEN"
-);
-
   const currentPeriod =
-    openPeriods.find(
-      (period) => period.periodNumber === equb?.currentPeriod
-    ) ||
-    openPeriods[0] ||
+    (equb?.currentPeriod && equb.currentPeriod > 0
+      ? periods.find((period) => period.periodNumber === equb.currentPeriod)
+      : null) ||
+    periods.find((period) => period.status?.toUpperCase() === "OPEN") ||
+    periods.find((period) => canUploadToPeriod(period)) ||
+    periods[0] ||
     null;
 
   const currentAmount = currentPeriod?.expectedAmount ??
     Number(equb?.contributionAmount || 0) *
-      Number(membership?.shares || 1);
+    Number(membership?.shares || 1);
 
   if (loading) {
     return (
@@ -668,22 +701,20 @@ const openPeriods = periods.filter(
               </Text>
 
               <View
-                className={`rounded-full px-3 py-1 ${
-                  currentPeriod.paymentStatus === "VERIFIED"
-                    ? "bg-emerald-400/15"
-                    : currentPeriod.paymentStatus === "REJECTED"
-                      ? "bg-red-400/15"
-                      : "bg-amber-400/15"
-                }`}
+                className={`rounded-full px-3 py-1 ${currentPeriod.paymentStatus === "VERIFIED"
+                  ? "bg-emerald-400/15"
+                  : currentPeriod.paymentStatus === "REJECTED"
+                    ? "bg-red-400/15"
+                    : "bg-amber-400/15"
+                  }`}
               >
                 <Text
-                  className={`text-xs font-bold ${
-                    currentPeriod.paymentStatus === "VERIFIED"
-                      ? "text-emerald-300"
-                      : currentPeriod.paymentStatus === "REJECTED"
-                        ? "text-red-300"
-                        : "text-amber-300"
-                  }`}
+                  className={`text-xs font-bold ${currentPeriod.paymentStatus === "VERIFIED"
+                    ? "text-emerald-300"
+                    : currentPeriod.paymentStatus === "REJECTED"
+                      ? "text-red-300"
+                      : "text-amber-300"
+                    }`}
                 >
                   {getPaymentStatusLabel(currentPeriod)}
                 </Text>
@@ -759,16 +790,74 @@ const openPeriods = periods.filter(
                 </Text>
               )}
 
-             {canUploadToPeriod(currentPeriod) ? (
+              {selectedPeriodId === currentPeriod.id && selectedReceipt ? (
+                <View className="mt-5 overflow-hidden rounded-2xl border border-slate-700 bg-slate-800">
+                  <View className="relative">
+                    <Image
+                      source={{ uri: selectedReceipt.uri }}
+                      className="h-48 w-full"
+                      resizeMode="cover"
+                    />
+
+                    <Pressable
+                      onPress={removeSelectedReceipt}
+                      disabled={uploading}
+                      className="absolute right-3 top-3 h-8 w-8 items-center justify-center rounded-full bg-black/70"
+                    >
+                      <X size={16} color="#ffffff" />
+                    </Pressable>
+                  </View>
+
+                  <View className="p-4">
+                    <Text
+                      numberOfLines={1}
+                      className="text-sm font-semibold text-white"
+                    >
+                      {selectedReceipt.name}
+                    </Text>
+
+                    <Text className="mt-0.5 text-xs text-slate-400">
+                      Receipt selected for Period {currentPeriod.periodNumber}
+                    </Text>
+
+                    <View className="mt-4 flex-row items-center gap-3">
+                      <Pressable
+                        onPress={() => openReceiptPicker(currentPeriod.id)}
+                        disabled={uploading}
+                        className="flex-1 items-center justify-center rounded-xl bg-slate-700 py-3"
+                      >
+                        <Text className="text-xs font-semibold text-slate-200">
+                          Change
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        onPress={() => uploadReceipt(currentPeriod.id)}
+                        disabled={uploading}
+                        className={`flex-1 items-center justify-center rounded-xl bg-white py-3 ${uploading ? "opacity-50" : ""
+                          }`}
+                      >
+                        {uploading && uploadingPeriodId === currentPeriod.id ? (
+                          <ActivityIndicator size="small" color="#0f172a" />
+                        ) : (
+                          <Text className="text-xs font-bold text-slate-900">
+                            Submit Receipt
+                          </Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ) : canUploadToPeriod(currentPeriod) ? (
                 <Pressable
                   onPress={() => openReceiptPicker(currentPeriod.id)}
-                  className="mt-5 flex-row items-center justify-center rounded-xl bg-white py-3"
+                  className="mt-5 flex-row items-center justify-center rounded-xl bg-white py-3.5"
                 >
                   <Upload size={16} color="#0f172a" />
 
                   <Text className="ml-2 font-bold text-slate-900">
                     {currentPeriod.paymentStatus === "REJECTED" ||
-                    currentPeriod.paymentStatus === "NEEDS_REVIEW"
+                      currentPeriod.paymentStatus === "NEEDS_REVIEW"
                       ? "Resubmit receipt"
                       : "Upload receipt"}
                   </Text>
@@ -815,7 +904,7 @@ const openPeriods = periods.filter(
 
                 // Eligibility is determined by the backend.
                 // Do not require period.status === "OPEN" here.
-           const canUpload = canUploadToPeriod(period);
+                const canUpload = canUploadToPeriod(period);
 
                 const statusClasses = getPaymentStatusClasses(period);
                 const isSelected = selectedPeriodId === period.id;
@@ -833,11 +922,10 @@ const openPeriods = periods.filter(
                 return (
                   <View
                     key={period.id}
-                    className={`mb-3 rounded-2xl bg-white p-5 ${
-                      isSelected && selectedReceipt
-                        ? "border-2 border-slate-900"
-                        : "border border-transparent"
-                    }`}
+                    className={`mb-3 rounded-2xl bg-white p-5 ${isSelected && selectedReceipt
+                      ? "border-2 border-slate-900"
+                      : "border border-transparent"
+                      }`}
                   >
                     {/* Period header */}
 
@@ -932,7 +1020,7 @@ const openPeriods = periods.filter(
                           Waiting for verification
                         </Text>
                       </View>
-                    ) : null}canUploadToPeriod 
+                    ) : null}
 
                     {/* Receipt preview */}
 
@@ -967,31 +1055,32 @@ const openPeriods = periods.filter(
                             {period.periodNumber}
                           </Text>
 
-                          <Pressable
-                            onPress={() => openReceiptPicker(period.id)}
-                            disabled={uploading}
-                            className="mt-3"
-                          >
-                            <Text className="text-sm font-bold text-slate-900">
-                              Replace image
-                            </Text>
-                          </Pressable>
-
-                          <Pressable
-                            onPress={() => uploadReceipt(period.id)}
-                            disabled={!canSubmitSelectedReceipt || uploading}
-                            className={`mt-4 items-center justify-center rounded-2xl bg-slate-900 py-4 ${
-                              uploading ? "opacity-50" : ""
-                            }`}
-                          >
-                            {isUploadingThisPeriod ? (
-                              <ActivityIndicator color="#ffffff" />
-                            ) : (
-                              <Text className="font-bold text-white">
-                                Submit Receipt
+                          <View className="mt-4 flex-row items-center gap-3">
+                            <Pressable
+                              onPress={() => openReceiptPicker(period.id)}
+                              disabled={uploading}
+                              className="flex-1 items-center justify-center rounded-xl border border-slate-300 bg-white py-3"
+                            >
+                              <Text className="text-xs font-semibold text-slate-700">
+                                Change Photo
                               </Text>
-                            )}
-                          </Pressable>
+                            </Pressable>
+
+                            <Pressable
+                              onPress={() => uploadReceipt(period.id)}
+                              disabled={!canSubmitSelectedReceipt || uploading}
+                              className={`flex-1 items-center justify-center rounded-xl bg-slate-900 py-3 ${uploading ? "opacity-50" : ""
+                                }`}
+                            >
+                              {isUploadingThisPeriod ? (
+                                <ActivityIndicator color="#ffffff" size="small" />
+                              ) : (
+                                <Text className="text-xs font-bold text-white">
+                                  Submit Receipt
+                                </Text>
+                              )}
+                            </Pressable>
+                          </View>
                         </View>
                       </View>
                     ) : null}
@@ -1002,22 +1091,22 @@ const openPeriods = periods.filter(
                       <Pressable
                         onPress={() => openReceiptPicker(period.id)}
                         disabled={uploading}
-                        className="mt-4 flex-row items-center justify-center rounded-xl bg-slate-50 px-3 py-3"
+                        className="mt-4 flex-row items-center justify-center rounded-xl bg-slate-900 py-3.5"
                       >
-                        <Upload size={16} color="#334155" />
+                        <Upload size={16} color="#ffffff" />
 
-                        <Text className="ml-2 text-xs font-semibold text-slate-700">
+                        <Text className="ml-2 text-xs font-bold text-white">
                           {paymentStatus === "REJECTED" ||
-                          paymentStatus === "NEEDS_REVIEW"
-                            ? "Tap to resubmit receipt"
-                            : "Tap to upload receipt"}
+                            paymentStatus === "NEEDS_REVIEW"
+                            ? "Resubmit receipt"
+                            : "Upload receipt"}
                         </Text>
                       </Pressable>
                     ) : null}
 
                     {!canUpload && paymentStatus !== "VERIFIED" &&
-                    paymentStatus !== "REJECTED" &&
-                    period.payment ? (
+                      paymentStatus !== "REJECTED" &&
+                      period.payment ? (
                       <View className="mt-4 rounded-xl bg-amber-50 px-3 py-3">
                         <Text className="text-xs leading-5 text-amber-800">
                           Your receipt has already been submitted. Please
@@ -1033,20 +1122,29 @@ const openPeriods = periods.filter(
         </View>
       </ScrollView>
 
-      {/* Receipt Picker */}
+      {/* Choice Modal: Camera vs Gallery */}
 
-      {pickerPeriodId ? (
-        <View className="absolute inset-0 justify-end">
+      <Modal
+        visible={Boolean(pickerPeriodId)}
+        transparent
+        animationType="slide"
+        onRequestClose={closeReceiptPicker}
+      >
+        <View className="flex-1 justify-end bg-black/60">
           <Pressable
             onPress={closeReceiptPicker}
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0"
           />
 
-          <View className="rounded-t-3xl bg-white px-5 pb-8 pt-5">
-            <View className="mb-5 flex-row items-center justify-between">
-              <View className="flex-1">
+          <View className="rounded-t-3xl bg-white px-6 pb-10 pt-4 shadow-2xl">
+            {/* Grab Handle */}
+            <View className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-300" />
+
+            {/* Header */}
+            <View className="mb-6 flex-row items-center justify-between">
+              <View className="flex-1 pr-3">
                 <Text className="text-xl font-bold text-slate-900">
-                  Add receipt
+                  Upload Receipt
                 </Text>
 
                 <Text className="mt-1 text-sm text-slate-500">
@@ -1056,68 +1154,85 @@ const openPeriods = periods.filter(
                       (period) => period.id === pickerPeriodId
                     )?.periodNumber
                   }
-                  {" · "}
-                  Choose how to add your receipt
+                  {(() => {
+                    const currentPickerPeriod = periods.find(
+                      (period) => period.id === pickerPeriodId
+                    );
+                    return currentPickerPeriod
+                      ? ` · ${formatMoney(currentPickerPeriod.expectedAmount)}`
+                      : "";
+                  })()}
                 </Text>
               </View>
 
               <Pressable
                 onPress={closeReceiptPicker}
-                className="h-9 w-9 items-center justify-center rounded-full bg-slate-100"
+                className="h-9 w-9 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
               >
-                <X size={18} color="#334155" />
+                <X size={18} color="#475569" />
               </Pressable>
             </View>
 
-            <View className="flex-row">
+            {/* Options */}
+            <View className="gap-3">
+              {/* Option 1: Camera */}
               <Pressable
-                onPress={() => pickReceipt(pickerPeriodId)}
+                onPress={() =>
+                  pickerPeriodId && takeReceiptPhoto(pickerPeriodId)
+                }
                 disabled={uploading}
-                className="mr-2 flex-1 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5"
+                className="flex-row items-center rounded-2xl border border-slate-200 bg-slate-50 p-4 active:bg-slate-100"
               >
-                <View className="h-12 w-12 items-center justify-center rounded-full bg-white">
-                  <ImageIcon size={23} color="#0f172a" />
+                <View className="h-12 w-12 items-center justify-center rounded-xl bg-slate-900 shadow-sm">
+                  <Camera size={22} color="#ffffff" />
                 </View>
 
-                <Text className="mt-3 font-bold text-slate-900">
-                  Gallery
-                </Text>
-
-                <Text className="mt-1 text-center text-xs text-slate-500">
-                  Choose an existing receipt
-                </Text>
+                <View className="ml-4 flex-1">
+                  <Text className="text-base font-bold text-slate-900">
+                    Take from Camera
+                  </Text>
+                  <Text className="mt-0.5 text-xs text-slate-500">
+                    Capture a new photo of your payment receipt
+                  </Text>
+                </View>
               </Pressable>
 
+              {/* Option 2: Choose from Gallery */}
               <Pressable
-                onPress={() => takeReceiptPhoto(pickerPeriodId)}
+                onPress={() =>
+                  pickerPeriodId && pickReceipt(pickerPeriodId)
+                }
                 disabled={uploading}
-                className="ml-2 flex-1 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5"
+                className="flex-row items-center rounded-2xl border border-slate-200 bg-slate-50 p-4 active:bg-slate-100"
               >
-                <View className="h-12 w-12 items-center justify-center rounded-full bg-white">
-                  <Camera size={23} color="#0f172a" />
+                <View className="h-12 w-12 items-center justify-center rounded-xl bg-blue-600 shadow-sm">
+                  <ImageIcon size={22} color="#ffffff" />
                 </View>
 
-                <Text className="mt-3 font-bold text-slate-900">
-                  Camera
-                </Text>
-
-                <Text className="mt-1 text-center text-xs text-slate-500">
-                  Take a receipt photo
-                </Text>
+                <View className="ml-4 flex-1">
+                  <Text className="text-base font-bold text-slate-900">
+                    Choose from Gallery
+                  </Text>
+                  <Text className="mt-0.5 text-xs text-slate-500">
+                    Select an existing receipt image from your device
+                  </Text>
+                </View>
               </Pressable>
             </View>
 
+            {/* Cancel Button */}
             <Pressable
               onPress={closeReceiptPicker}
-              className="mt-4 items-center py-3"
+              disabled={uploading}
+              className="mt-5 items-center rounded-xl py-3 active:bg-slate-100"
             >
-              <Text className="font-semibold text-slate-500">
+              <Text className="text-sm font-semibold text-slate-500">
                 Cancel
               </Text>
             </Pressable>
           </View>
         </View>
-      ) : null}
+      </Modal>
     </View>
   );
 }
