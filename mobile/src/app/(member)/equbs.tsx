@@ -8,7 +8,14 @@ import {
   View,
 } from "react-native";
 import { router } from "expo-router";
-import { ArrowRight, Users, Wallet, Clock, CheckCircle2 } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
+import {
+  ArrowRight,
+  Clock,
+  User,
+  Users,
+  Wallet,
+} from "lucide-react-native";
 
 import {
   getEqubs,
@@ -46,6 +53,7 @@ type Membership = {
 };
 
 export default function EqubsScreen() {
+  const { t } = useTranslation();
   const [equbs, setEqubs] = useState<Equb[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
 
@@ -116,7 +124,7 @@ export default function EqubsScreen() {
       <View className="flex-1 items-center justify-center bg-gray-50">
         <ActivityIndicator size="large" color="#18181b" />
         <Text className="mt-4 text-sm font-medium text-gray-500">
-          Syncing your Equbs...
+          {t("equb.syncingEqubs")}
         </Text>
       </View>
     );
@@ -142,14 +150,22 @@ export default function EqubsScreen() {
       >
         {/* Header */}
         <View className="mb-8">
-          <View className="mb-4 h-12 w-12 items-center justify-center rounded-2xl bg-white border border-gray-100 shadow-sm">
-            <Wallet size={24} color="#18181b" strokeWidth={2.5} />
+          <View className="mb-4 flex-row items-center justify-between">
+            <View className="h-12 w-12 items-center justify-center rounded-2xl bg-white border border-gray-100 shadow-sm">
+              <Wallet size={24} color="#18181b" strokeWidth={2.5} />
+            </View>
+            <Pressable
+              onPress={() => router.push("/profile")}
+              className="h-11 w-11 items-center justify-center rounded-2xl bg-white border border-gray-100 shadow-sm active:bg-gray-100"
+            >
+              <User size={20} color="#18181b" />
+            </Pressable>
           </View>
           <Text className="text-3xl font-bold tracking-tight text-zinc-900">
-            Available Equbs
+            {t("equb.availableEqubs")}
           </Text>
           <Text className="mt-2 text-base leading-6 text-gray-500">
-            Find the right saving circle and request to become a member.
+            {t("equb.findCircle")}
           </Text>
         </View>
 
@@ -169,10 +185,10 @@ export default function EqubsScreen() {
               <Users size={32} color="#9ca3af" />
             </View>
             <Text className="text-lg font-bold text-zinc-900">
-              No Equbs available
+              {t("equb.noEqubsAvailable")}
             </Text>
             <Text className="mt-2 text-center text-sm leading-5 text-gray-500">
-              There are currently no active Equbs available to join. Check back later.
+              {t("equb.noEqubsDescription")}
             </Text>
           </View>
         ) : (
@@ -208,7 +224,7 @@ export default function EqubsScreen() {
                 <View className="rounded-2xl bg-gray-50 p-4 border border-gray-100 mb-5">
                   <View className="flex-row justify-between items-center mb-3 pb-3 border-b border-gray-200/60">
                     <Text className="text-sm font-medium text-gray-500">
-                      Contribution
+                      {t("contribution.title")}
                     </Text>
                     <Text className="text-base font-bold text-zinc-900">
                       {equb.currency} {Number(equb.contributionAmount).toLocaleString()}
@@ -217,7 +233,7 @@ export default function EqubsScreen() {
 
                   <View className="flex-row justify-between items-center mb-3 pb-3 border-b border-gray-200/60">
                     <Text className="text-sm font-medium text-gray-500">
-                      Frequency
+                      {t("equb.frequency")}
                     </Text>
                     <Text className="text-sm font-semibold text-zinc-800 capitalize">
                       {equb.frequency.toLowerCase()}
@@ -226,17 +242,17 @@ export default function EqubsScreen() {
 
                   <View className="flex-row justify-between items-center mb-3 pb-3 border-b border-gray-200/60">
                     <Text className="text-sm font-medium text-gray-500">
-                      Duration
+                      {t("equb.duration")}
                     </Text>
                     <Text className="text-sm font-semibold text-zinc-800">
-                      {equb.totalPeriods} periods
+                      {equb.totalPeriods} {t("equb.periods")}
                     </Text>
                   </View>
 
                   {equb._count && (
                     <View className="flex-row justify-between items-center">
                       <Text className="text-sm font-medium text-gray-500">
-                        Active Members
+                        {t("members.activeMembers")}
                       </Text>
                       <Text className="text-sm font-semibold text-zinc-800">
                         {equb._count.memberships}
@@ -251,7 +267,7 @@ export default function EqubsScreen() {
                     <View className="flex-row items-center justify-center rounded-2xl bg-amber-50 border border-amber-100 py-4">
                       <Clock size={18} color="#b45309" className="mr-2" />
                       <Text className="font-bold text-amber-700">
-                        Request Pending
+                        {t("equb.requestPending")}
                       </Text>
                     </View>
                   ) : isActive ? (
@@ -260,7 +276,7 @@ export default function EqubsScreen() {
                       className="flex-row items-center justify-center rounded-2xl bg-zinc-900 active:bg-zinc-800 py-4"
                     >
                       <Text className="mr-2 text-base font-bold text-white">
-                        Open Equb
+                        {t("equb.openEqub")}
                       </Text>
                       <ArrowRight size={20} color="#ffffff" />
                     </Pressable>
@@ -276,7 +292,7 @@ export default function EqubsScreen() {
                         <ActivityIndicator color="#ffffff" />
                       ) : (
                         <Text className="text-base font-bold text-white">
-                          Request to Join
+                          {t("equb.requestToJoin")}
                         </Text>
                       )}
                     </Pressable>

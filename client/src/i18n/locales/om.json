@@ -1,0 +1,47 @@
+{
+    "common": {
+        "home": "Mana",
+        "payments": "Kaffaltii",
+        "profile": "Odeeffannoo dhuunfaa",
+        "settings": "Qindaa'ina",
+        "logout": "Ba'i",
+        "save": "Olkaa'i",
+        "cancel": "Dhiisi",
+        "loading": "Fe'amaa jira...",
+        "search": "Barbaadi",
+        "back": "Duubatti deebi'i",
+        "language": "Afaan",
+        "success": "Milkaa'e",
+        "error": "Rakkoon uumameera"
+    },
+    "auth": {
+        "login": "Seeni",
+        "register": "Galmaa'i",
+        "email": "Imeelii",
+        "password": "Jecha iccitii",
+        "forgotPassword": "Jecha iccitii irraanfatte?"
+    },
+    "equb": {
+        "myEqubs": "Equb koo",
+        "createEqub": "Equb uumi",
+        "contribution": "Gumaacha",
+        "members": "Miseensota",
+        "currentPeriod": "Marsaa ammaa",
+        "nextPayment": "Kaffaltii itti aanu"
+    },
+    "payment": {
+        "paymentHistory": "Seenaa kaffaltii",
+        "uploadReceipt": "Ragaa kaffaltii olkaa'i",
+        "pending": "Eegamaa jira",
+        "verified": "Mirkanaa'eera",
+        "rejected": "Dideera",
+        "amount": "Hamma",
+        "status": "Haala"
+    },
+    "lottery": {
+        "title": "Carraa",
+        "drawWinner": "Mo'ataa filadhu",
+        "winner": "Mo'ataa",
+        "history": "Seenaa carraa"
+    }
+}

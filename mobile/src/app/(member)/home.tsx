@@ -9,11 +9,14 @@ import {
   FileText,
   Gift,
   Trophy,
+  User,
   Users,
 } from "lucide-react-native";
 import { router } from "expo-router";
+import { useTranslation } from "react-i18next";
 
 const HomeScreen = () => {
+  const { t } = useTranslation();
   const equbs = [
     {
       id: "2c1ba2fc-1e55-4685-aa08-ac6d22da98ec",
@@ -71,20 +74,28 @@ const HomeScreen = () => {
           <View className="flex-row items-center justify-between">
             <View>
               <Text className="text-sm font-medium text-slate-500">
-                Welcome back
+                {t("auth.welcomeBack")}
               </Text>
 
               <Text className="mt-1 text-2xl font-bold text-slate-900">
-                Good morning 👋
+                {t("auth.goodMorning")} 👋
               </Text>
             </View>
 
-    <TouchableOpacity
-  className="h-11 w-11 items-center justify-center rounded-full bg-white"
->
+            <View className="flex-row items-center gap-2">
+              <TouchableOpacity
+                onPress={() => router.push("/profile")}
+                className="h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"
+              >
+                <User size={20} color="#0f172a" />
+              </TouchableOpacity>
 
-              <Bell size={21} color="#0f172a" />
-            </TouchableOpacity>
+              <TouchableOpacity
+                className="h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"
+              >
+                <Bell size={21} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -98,7 +109,7 @@ const HomeScreen = () => {
 
               <View className="ml-3">
                 <Text className="text-sm text-slate-300">
-                  Active Equbs
+                  {t("equb.activeEqubs")}
                 </Text>
 
                 <Text className="mt-1 text-2xl font-bold text-white">
@@ -110,7 +121,7 @@ const HomeScreen = () => {
             <View className="mt-5 flex-row">
               <View className="flex-1">
                 <Text className="text-xs text-slate-400">
-                  Next payment
+                  {t("contribution.nextPayment")}
                 </Text>
 
                 <Text className="mt-1 text-lg font-bold text-white">
@@ -120,7 +131,7 @@ const HomeScreen = () => {
 
               <View className="flex-1">
                 <Text className="text-xs text-slate-400">
-                  Next lottery
+                  {t("lottery.nextLottery")}
                 </Text>
 
                 <Text className="mt-1 text-lg font-bold text-white">
@@ -135,12 +146,12 @@ const HomeScreen = () => {
         <View className="mt-7 px-5">
           <View className="mb-4 flex-row items-center justify-between">
             <Text className="text-xl font-bold text-slate-900">
-              My Equbs
+              {t("equb.myEqubs")}
             </Text>
 
             <TouchableOpacity onPress={() => router.push("/equbs")}>
               <Text className="font-semibold text-slate-700">
-                View all
+                {t("common.viewAll")}
               </Text>
             </TouchableOpacity>
           </View>
@@ -169,7 +180,7 @@ const HomeScreen = () => {
               <View className="mt-5">
                 <View className="flex-row items-center justify-between">
                   <Text className="text-sm text-slate-500">
-                    Current period
+                    {t("contribution.currentPeriod")}
                   </Text>
 
                   <Text className="text-sm font-bold text-slate-900">
@@ -191,7 +202,7 @@ const HomeScreen = () => {
 
               <View className="mt-5 flex-row items-center justify-between border-t border-slate-100 pt-4">
                 <Text className="text-sm text-slate-500">
-                  Payment status
+                  {t("payment.paymentStatus")}
                 </Text>
 
                 <View

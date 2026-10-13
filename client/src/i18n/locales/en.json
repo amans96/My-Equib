@@ -1,0 +1,47 @@
+{
+    "common": {
+        "home": "Home",
+        "payments": "Payments",
+        "profile": "Profile",
+        "settings": "Settings",
+        "logout": "Log out",
+        "save": "Save",
+        "cancel": "Cancel",
+        "loading": "Loading...",
+        "search": "Search",
+        "back": "Back",
+        "language": "Language",
+        "success": "Success",
+        "error": "Something went wrong"
+    },
+    "auth": {
+        "login": "Login",
+        "register": "Register",
+        "email": "Email",
+        "password": "Password",
+        "forgotPassword": "Forgot password?"
+    },
+    "equb": {
+        "myEqubs": "My Equbs",
+        "createEqub": "Create Equb",
+        "contribution": "Contribution",
+        "members": "Members",
+        "currentPeriod": "Current period",
+        "nextPayment": "Next payment"
+    },
+    "payment": {
+        "paymentHistory": "Payment history",
+        "uploadReceipt": "Upload receipt",
+        "pending": "Pending",
+        "verified": "Verified",
+        "rejected": "Rejected",
+        "amount": "Amount",
+        "status": "Status"
+    },
+    "lottery": {
+        "title": "Lottery",
+        "drawWinner": "Draw winner",
+        "winner": "Winner",
+        "history": "Draw history"
+    }
+}

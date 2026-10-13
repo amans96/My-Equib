@@ -1,0 +1,47 @@
+{
+    "common": {
+        "home": "መነሻ",
+        "payments": "ክፍያዎች",
+        "profile": "የግል መረጃ",
+        "settings": "ቅንብሮች",
+        "logout": "ውጣ",
+        "save": "አስቀምጥ",
+        "cancel": "ሰርዝ",
+        "loading": "በመጫን ላይ...",
+        "search": "ፈልግ",
+        "back": "ተመለስ",
+        "language": "ቋንቋ",
+        "success": "ተሳክቷል",
+        "error": "የሆነ ችግር ተፈጥሯል"
+    },
+    "auth": {
+        "login": "ግባ",
+        "register": "ይመዝገቡ",
+        "email": "ኢሜይል",
+        "password": "የይለፍ ቃል",
+        "forgotPassword": "የይለፍ ቃል ረሱ?"
+    },
+    "equb": {
+        "myEqubs": "የእኔ ዕቁቦች",
+        "createEqub": "ዕቁብ ፍጠር",
+        "contribution": "መዋጮ",
+        "members": "አባላት",
+        "currentPeriod": "የአሁኑ ዙር",
+        "nextPayment": "ቀጣይ ክፍያ"
+    },
+    "payment": {
+        "paymentHistory": "የክፍያ ታሪክ",
+        "uploadReceipt": "ደረሰኝ ጫን",
+        "pending": "በመጠባበቅ ላይ",
+        "verified": "ተረጋግጧል",
+        "rejected": "ውድቅ ተደርጓል",
+        "amount": "መጠን",
+        "status": "ሁኔታ"
+    },
+    "lottery": {
+        "title": "ዕጣ ማውጣት",
+        "drawWinner": "አሸናፊ ምረጥ",
+        "winner": "አሸናፊ",
+        "history": "የዕጣ ታሪክ"
+    }
+}
