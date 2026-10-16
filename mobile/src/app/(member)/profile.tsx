@@ -110,13 +110,13 @@ export default function ProfileScreen() {
         {/* Top Bar */}
         <View className="mb-6 flex-row items-center justify-between">
           <Pressable
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace("/equbs");
-              }
-            }}
+           onPress={() => {
+  if (router.canGoBack()) {
+    router.back();
+  } else {
+    router.replace("/"); // Replace with the correct fallback route.
+  }
+}}
             className="h-11 w-11 items-center justify-center rounded-2xl bg-white border border-gray-100 shadow-sm active:bg-gray-100"
           >
             <ArrowLeft size={20} color="#18181b" />

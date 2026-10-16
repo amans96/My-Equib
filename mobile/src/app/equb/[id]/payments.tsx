@@ -229,13 +229,13 @@ export default function PaymentsScreen() {
     loadPaymentData();
   };
 
-  const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace("/(member)/equbs");
-    }
-  };
+ const handleBack = () => {
+  if (router.canGoBack()) {
+    router.back();
+  } else {
+    router.replace("/(member)/equbs");
+  }
+};
 
   // --------------------------------------------------
   // Receipt picker

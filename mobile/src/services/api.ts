@@ -1,16 +1,14 @@
-
 import { getToken } from "./storage";
 
-const API_URL = "http://10.178.128.65:5000/api";
+const API_URL = "http://10.24.49.65:5000/api";
 
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = await getToken();
-
   const isFormData =
-    typeof FormData !== "undefined" && options.body instanceof FormData;
+    typeof FormData !== "undefined" &&
+    options.body instanceof FormData;
 
   const headers = new Headers(options.headers);
 
@@ -21,9 +19,17 @@ export async function apiRequest<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  // Attach the authentication token when available.
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
+  // Do not attach an old token to login or registration.
+  const isPublicAuthRoute =
+    endpoint === "/auth/login" ||
+    endpoint === "/auth/register";
+
+  if (!isPublicAuthRoute) {
+    const token = await getToken();
+
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
   }
 
   const response = await fetch(`${API_URL}${endpoint}`, {

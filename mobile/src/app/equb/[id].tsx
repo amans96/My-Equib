@@ -181,7 +181,13 @@ export default function EqubHomeScreen() {
         </Pressable>
 
         <Pressable
-          onPress={() => router.back()}
+         onPress={() => {
+  if (router.canGoBack()) {
+    router.back();
+  } else {
+    router.replace("/"); // Replace with the correct fallback route.
+  }
+}}
           className="mt-5"
         >
           <Text className="font-semibold text-slate-600">
@@ -283,7 +289,13 @@ export default function EqubHomeScreen() {
         {/* Header */}
         <View className="px-5 pb-5 pt-14">
           <Pressable
-            onPress={() => router.back()}
+           onPress={() => {
+  if (router.canGoBack()) {
+    router.back();
+  } else {
+    router.replace("/"); // Replace with the correct fallback route.
+  }
+}}
             className="mb-6 h-10 w-10 items-center justify-center rounded-full bg-white"
           >
             <ArrowLeft
