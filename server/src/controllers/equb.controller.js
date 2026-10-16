@@ -557,6 +557,7 @@ export const getEqubById = async (req, res) => {
 */
 export const updateEqub = async (req, res) => {
   try {
+    // 1. Authenticate user
     if (!req.user?.userId) {
       return res.status(401).json({
         success: false,
@@ -566,9 +567,10 @@ export const updateEqub = async (req, res) => {
 
     const { id } = req.params;
 
+    // FIX: Use userId, matching your authentication middleware
     const user = await prisma.user.findUnique({
       where: {
-        id: req.user.id,
+        id: req.user.userId,
       },
       select: {
         id: true,
@@ -591,11 +593,8 @@ export const updateEqub = async (req, res) => {
       });
     }
 
-    // Only ADMIN and SUPER_ADMIN can update
-    if (
-      user.role !== "ADMIN" &&
-      user.role !== "SUPER_ADMIN"
-    ) {
+    // 2. Check permissions
+    if (!["ADMIN", "SUPER_ADMIN"].includes(user.role)) {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to update an Equb",
@@ -603,9 +602,7 @@ export const updateEqub = async (req, res) => {
     }
 
     const existingEqub = await prisma.equb.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
     });
 
     if (!existingEqub) {
@@ -626,6 +623,7 @@ export const updateEqub = async (req, res) => {
       });
     }
 
+    // 3. Read request fields
     const {
       name,
       description,
@@ -642,7 +640,7 @@ export const updateEqub = async (req, res) => {
 
     // Name
     if (name !== undefined) {
-      if (!name.trim()) {
+      if (typeof name !== "string" || !name.trim()) {
         return res.status(400).json({
           success: false,
           message: "name cannot be empty",
@@ -654,7 +652,10 @@ export const updateEqub = async (req, res) => {
 
     // Description
     if (description !== undefined) {
-      data.description = description?.trim() || null;
+      data.description =
+        typeof description === "string"
+          ? description.trim() || null
+          : null;
     }
 
     // Contribution amount
@@ -739,7 +740,7 @@ export const updateEqub = async (req, res) => {
 
     // Currency
     if (currency !== undefined) {
-      if (!currency.trim()) {
+      if (typeof currency !== "string" || !currency.trim()) {
         return res.status(400).json({
           success: false,
           message: "currency cannot be empty",
@@ -770,31 +771,165 @@ export const updateEqub = async (req, res) => {
       data.status = status;
     }
 
-    // Update
-    const updatedEqub = await prisma.equb.update({
-      where: {
-        id,
-      },
+    // 4. Determine whether the payment schedule changes
+    const nextStartDate = data.startDate ?? existingEqub.startDate;
+    const nextEndDate =
+      data.endDate !== undefined
+        ? data.endDate
+        : existingEqub.endDate;
 
-      data,
+    const nextFrequency = data.frequency ?? existingEqub.frequency;
 
-      include: {
-        createdBy: {
+    const nextTotalPeriods =
+      data.totalPeriods ?? existingEqub.totalPeriods;
+
+    const nextContributionAmount =
+      data.contributionAmount ?? Number(existingEqub.contributionAmount);
+
+    const scheduleChanged =
+      nextFrequency !== existingEqub.frequency ||
+      nextTotalPeriods !== existingEqub.totalPeriods ||
+      nextStartDate.getTime() !== existingEqub.startDate.getTime() ||
+      (nextEndDate?.getTime() ?? null) !==
+        (existingEqub.endDate?.getTime() ?? null) ||
+      Number(nextContributionAmount) !==
+        Number(existingEqub.contributionAmount);
+
+    let generatedPeriods = [];
+
+    if (scheduleChanged) {
+      // The current generator requires an end date.
+      if (!nextEndDate) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "An endDate is required to regenerate payment periods. Please provide an endDate.",
+        });
+      }
+
+      if (nextStartDate >= nextEndDate) {
+        return res.status(400).json({
+          success: false,
+          message: "Start date must be before end date.",
+        });
+      }
+
+      // Use the proposed Equb settings to generate the new schedule.
+      generatedPeriods = generatePaymentPeriods({
+        startDate: nextStartDate,
+        endDate: nextEndDate,
+        frequency: nextFrequency,
+        contributionAmount: nextContributionAmount,
+      });
+
+      // Do not silently create a schedule inconsistent with totalPeriods.
+      
+      
+    }
+
+    // 5. Update Equb and regenerate periods atomically
+    const result = await prisma.$transaction(async (tx) => {
+      if (scheduleChanged) {
+        const existingPeriods = await tx.paymentPeriod.findMany({
+          where: { equbId: id },
           select: {
             id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            role: true,
+            periodNumber: true,
+            allocations: {
+              select: {
+                id: true,
+              },
+            },
+            lotteryDraw: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        });
+
+        // Protect periods with financial allocations or lottery history.
+        const protectedPeriods = existingPeriods.filter(
+          (period) =>
+            period.allocations.length > 0 ||
+            period.lotteryDraw !== null
+        );
+
+        if (protectedPeriods.length > 0) {
+          return {
+            error: true,
+            statusCode: 409,
+            message:
+              "The payment schedule cannot be changed because some periods already have payment allocations or lottery records. Preserve those periods and handle schedule changes separately.",
+            protectedPeriods: protectedPeriods.map((period) => ({
+              periodNumber: period.periodNumber,
+              hasAllocations: period.allocations.length > 0,
+              hasLotteryDraw: period.lotteryDraw !== null,
+            })),
+          };
+        }
+
+        // Safe only because every existing period is unprotected.
+        await tx.paymentPeriod.deleteMany({
+          where: { equbId: id },
+        });
+      }
+
+      const updatedEqub = await tx.equb.update({
+        where: { id },
+        data,
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              role: true,
+            },
           },
         },
-      },
+      });
+
+      if (scheduleChanged && generatedPeriods.length > 0) {
+        await tx.paymentPeriod.createMany({
+          data: generatedPeriods.map((period) => ({
+            equbId: id,
+            periodNumber: period.periodNumber,
+            startDate: period.startDate,
+            dueDate: period.dueDate,
+            expectedAmount: period.expectedAmount,
+            status: "UPCOMING",
+          })),
+        });
+      }
+
+      return {
+        error: false,
+        equb: updatedEqub,
+        periodsRegenerated: scheduleChanged,
+        periodsCreated: scheduleChanged
+          ? generatedPeriods.length
+          : 0,
+      };
     });
+
+    if (result.error) {
+      return res.status(result.statusCode).json({
+        success: false,
+        message: result.message,
+        protectedPeriods: result.protectedPeriods,
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      message: "Equb updated successfully",
-      equb: updatedEqub,
+      message: result.periodsRegenerated
+        ? "Equb updated and payment periods regenerated successfully"
+        : "Equb updated successfully",
+      equb: result.equb,
+      periodsRegenerated: result.periodsRegenerated,
+      periodsCreated: result.periodsCreated,
     });
   } catch (error) {
     console.error("Update Equb Error:", error);
