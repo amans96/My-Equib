@@ -12,11 +12,11 @@ import { router, useLocalSearchParams } from "expo-router";
 
 import {
   ArrowLeft,
+  Bell,
   CalendarDays,
   ChevronRight,
   Clock3,
   CreditCard,
-  FileText,
   History,
   RefreshCw,
   ShieldCheck,
@@ -241,36 +241,33 @@ export default function EqubHomeScreen() {
    * src/app/equb/[id]/receipts.tsx
    * src/app/equb/[id]/history.tsx
    */
-  const quickLinks = [
-    {
-      title: "Payments",
-      description:
-        "Contributions and payment status",
-      icon: CreditCard,
-      route: `/equb/${id}/payments`,
-    },
-    {
-      title: "Lottery",
-      description:
-        "Draws and previous winners",
-      icon: Trophy,
-      route: `/equb/${id}/lottery`,
-    },
-    {
-      title: "Receipts",
-      description:
-        "Your uploaded payment receipts",
-      icon: FileText,
-      route: `/equb/${id}/receipts`,
-    },
-    {
-      title: "History",
-      description:
-        "Your Equb activity and records",
-      icon: History,
-      route: `/equb/${id}/history`,
-    },
-  ];
+const quickLinks = [
+  {
+    title: "Payments",
+    description: "Contributions and payment status",
+    icon: CreditCard,
+    route: `/equb/${id}/payments`,
+  },
+  {
+    title: "Lottery",
+    description: "Draws and previous winners",
+    icon: Trophy,
+    route: `/equb/${id}/lottery`,
+  },
+  {
+    title: "Notifications",
+    description: "Equb announcements and updates",
+    icon: Bell,
+    route: `/equb/${id}/notifications`,
+  },
+  {
+    title: "History",
+    description: "Your Equb activity and records",
+    icon: History,
+    route: `/equb/${id}/history`,
+  },
+];
+  
 
   return (
     <View className="flex-1 bg-slate-50">
