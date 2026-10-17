@@ -30,10 +30,12 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  memberships          EqubMembership[]
-  payments             Payment[]
-  receipts             Receipt[]
-  notifications        Notification[]
+  memberships            EqubMembership[]
+  payments               Payment[]
+  receipts               Receipt[]
+  notificationRecipients NotificationRecipient[]
+
+  createdNotifications Notification[]        @relation("NotificationCreator")
   auditLogs            AuditLog[]
   createdEqubs         Equb[]                @relation("EqubCreator")
   managedEqubs         EqubAdmin[]
@@ -77,7 +79,7 @@ model Equb {
   bankAccounts         EqubBankAccount[]
   bankTransactions     BankTransaction[]
   lotteryDraws         LotteryDraw[]
-  notifications        Notification[]
+  notificationTargets  NotificationEqub[]
   auditLogs            AuditLog[]
   bankStatementImports BankStatementImport[]
 
@@ -317,12 +319,12 @@ model BankTransaction {
 
   accountNumber String?
 
-  senderName    String?
-  senderAccount String?
-reviewStatus BankTransactionReviewStatus @default(PENDING)
-reviewedById String?
-reviewedAt DateTime?
-reviewReason String?
+  senderName      String?
+  senderAccount   String?
+  reviewStatus    BankTransactionReviewStatus @default(PENDING)
+  reviewedById    String?
+  reviewedAt      DateTime?
+  reviewReason    String?
   receiverName    String?
   receiverAccount String?
 
@@ -548,28 +550,57 @@ model EqubBankAccount {
 // ============================================================
 // NOTIFICATION
 // ============================================================
-
 model Notification {
-  id String @id @default(uuid())
-
-  userId String
-  equbId String?
-
-  user User  @relation(fields: [userId], references: [id])
-  equb Equb? @relation(fields: [equbId], references: [id], onDelete: Cascade)
-
+  id      String           @id @default(uuid())
   title   String
   message String
+  type    NotificationType
 
-  type NotificationType
+  createdById String?
+  createdBy   User?   @relation("NotificationCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
-  isRead Boolean @default(false)
+  recipients NotificationRecipient[]
+  equbs      NotificationEqub[]
 
   createdAt DateTime @default(now())
 
-  @@index([userId, isRead])
-  @@index([equbId])
   @@index([type])
+  @@index([createdAt])
+  @@index([createdById])
+}
+
+model NotificationRecipient {
+  id             String @id @default(uuid())
+  notificationId String
+  userId         String
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  isRead Boolean   @default(false)
+  readAt DateTime?
+
+  pushStatus String    @default("PENDING")
+  pushSentAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([notificationId, userId])
+  @@index([userId, isRead])
+  @@index([notificationId])
+  @@index([pushStatus])
+}
+
+model NotificationEqub {
+  id             String @id @default(uuid())
+  notificationId String
+  equbId         String
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  equb         Equb         @relation(fields: [equbId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, equbId])
+  @@index([equbId])
 }
 
 // ============================================================
@@ -679,6 +710,7 @@ enum ReceiptStatus {
   VERIFIED
   REJECTED
 }
+
 enum BankTransactionReviewStatus {
   PENDING
   APPROVED
@@ -732,11 +764,16 @@ enum PayoutStatus {
 }
 
 enum NotificationType {
+  GENERAL
+
   PAYMENT_REMINDER
   PAYMENT_SUBMITTED
   PAYMENT_VERIFIED
   PAYMENT_REJECTED
+
   LOTTERY_RESULT
+  DRAW
   PAYOUT
+
   SYSTEM
 }

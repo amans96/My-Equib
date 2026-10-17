@@ -3,7 +3,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import ProtectedRoute from "../components/layout/ProtectedRoute";
 import AppLayout from "../components/layout/AppLayout";
-
+import NotificationPage from "../pages/admin/NotificationPage";
 // =========================================================
 // AUTH PAGES
 // =========================================================
@@ -205,7 +205,7 @@ const router = createBrowserRouter([
           // Payments
           {
             path: "/admin/equbs/:equbId/payments",
-            element: <Placeholder title="Payments" />,
+            element: <NotificationPage />,
           },
 
           // Bank statements

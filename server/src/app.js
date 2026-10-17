@@ -10,7 +10,7 @@ import lotteryRoutes from "./routes/lottery.routes.js";
 import bankStatementRoutes from "./routes/bankStatement.routes.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import { loginLimiter } from "./middleware/loginLimiter.js";
-
+import notificationRoutes from "./routes/notificationRoutes.js";
 const app = express();
 
 // Middleware
@@ -37,4 +37,5 @@ app.use("/api/equbs", equbRoutes);
 app.use("/api", receiptRoutes);
 app.use("/api", lotteryRoutes);
 app.use("/api", bankStatementRoutes);
+app.use("/api/notifications", notificationRoutes);
 export default app;
