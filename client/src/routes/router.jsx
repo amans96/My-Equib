@@ -1,8 +1,9 @@
+
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import ProtectedRoute from "../components/layout/ProtectedRoute";
 import AppLayout from "../components/layout/AppLayout";
-import LotteryPage from "../pages/admin/LotteryPage";
+
 // =========================================================
 // AUTH PAGES
 // =========================================================
@@ -21,6 +22,8 @@ import MembersPage from "../pages/admin/MembersPage";
 import PaymentPeriodsPage from "../pages/admin/PaymentPeriodsPage";
 import PaymentPeriodDetailsPage from "../pages/admin/PaymentPeriodDetailsPage";
 import OCRDetailsPage from "../pages/admin/OCRDetailsPage";
+import LotteryPage from "../pages/admin/LotteryPage";
+import BankStatements from "../pages/admin/BankStatements";
 
 // =========================================================
 // TEMPORARY PAGES
@@ -121,32 +124,26 @@ const router = createBrowserRouter([
 
   {
     element: <ProtectedRoute allowedRoles={["MEMBER"]} />,
-
     children: [
       {
         element: <AppLayout />,
-
         children: [
           {
             path: "/dashboard",
             element: <MemberDashboard />,
           },
-
           {
             path: "/equbs",
             element: <Placeholder title="My Equbs" />,
           },
-
           {
             path: "/equbs/:equbId",
             element: <Placeholder title="Equb Details" />,
           },
-
           {
             path: "/equbs/:equbId/periods",
             element: <Placeholder title="Payment Periods" />,
           },
-
           {
             path: "/profile",
             element: <Placeholder title="Profile" />,
@@ -162,13 +159,10 @@ const router = createBrowserRouter([
 
   {
     element: <ProtectedRoute allowedRoles={["ADMIN"]} />,
-
     children: [
       {
         element: <AppLayout />,
-
         children: [
-          // Admin dashboard
           {
             path: "/admin/dashboard",
             element: <AdminDashboard />,
@@ -179,20 +173,14 @@ const router = createBrowserRouter([
             path: "/admin/equbs",
             element: <EqubsPage />,
           },
-
-          // Create Equb
           {
             path: "/admin/equbs/create",
             element: <CreateEqubPage />,
           },
-
-          // Equb details
           {
             path: "/admin/equbs/:equbId",
             element: <EqubDetailsPage />,
           },
-
-          // Equb members
           {
             path: "/admin/equbs/:equbId/members",
             element: <MembersPage />,
@@ -203,43 +191,40 @@ const router = createBrowserRouter([
             path: "/admin/equbs/:equbId/periods",
             element: <PaymentPeriodsPage />,
           },
-
-          // =================================================
-          // PAYMENT PERIOD DETAILS
-          // =================================================
-
           {
             path: "/admin/equbs/:equbId/periods/:periodId",
             element: <PaymentPeriodDetailsPage />,
           },
 
-          // =================================================
-          // OCR DETAILS
-          // =================================================
-
+          // Receipt OCR details
           {
             path: "/admin/equbs/:equbId/periods/:periodId/receipts/:receiptId/ocr",
             element: <OCRDetailsPage />,
           },
 
-          // =================================================
-          // OTHER ADMIN PAGES
-          // =================================================
-
+          // Payments
           {
             path: "/admin/equbs/:equbId/payments",
             element: <Placeholder title="Payments" />,
           },
 
+          // Bank statements
           {
-            path: "/admin/equbs/:equbId/receipts",
-            element: <Placeholder title="Receipts" />,
+            path: "/admin/equbs/:equbId/bank-statements",
+            element: <BankStatements />,
           },
 
-        {
-  path: "/admin/equbs/:equbId/lottery",
-  element: <LotteryPage />,
-},
+          // Receipts
+          {
+            path: "/admin/equbs/:equbId/receipts",
+            element: <BankStatements />,
+          },
+
+          // Lottery
+          {
+            path: "/admin/equbs/:equbId/lottery",
+            element: <LotteryPage />,
+          },
         ],
       },
     ],
@@ -251,27 +236,22 @@ const router = createBrowserRouter([
 
   {
     element: <ProtectedRoute allowedRoles={["SUPER_ADMIN"]} />,
-
     children: [
       {
         element: <AppLayout />,
-
         children: [
           {
             path: "/super-admin/dashboard",
             element: <SuperAdminDashboard />,
           },
-
           {
             path: "/super-admin/users",
             element: <Placeholder title="Users" />,
           },
-
           {
             path: "/super-admin/equbs",
             element: <Placeholder title="Equbs" />,
           },
-
           {
             path: "/super-admin/transactions",
             element: <Placeholder title="Transactions" />,
@@ -296,7 +276,6 @@ const router = createBrowserRouter([
 
   {
     path: "*",
-
     element: (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
         <div className="text-center">

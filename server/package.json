@@ -23,10 +23,13 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "mupdf": "^1.28.1",
     "nodeman": "^1.1.2",
     "openai": "^7.25.0",
+    "pdf-parse": "^1.1.1",
     "sharp": "^0.35.5",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.10",

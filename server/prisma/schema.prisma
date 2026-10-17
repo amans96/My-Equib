@@ -40,8 +40,7 @@ model User {
   lotteryEntries       LotteryEntry[]
   payouts              Payout[]
   paymentVerifications PaymentVerification[]
-
-
+  bankStatementImports BankStatementImport[]
 }
 
 // ============================================================
@@ -72,14 +71,15 @@ model Equb {
   updatedAt DateTime @updatedAt
 
   // Relations
-  memberships      EqubMembership[]
-  admins           EqubAdmin[]
-  periods          PaymentPeriod[]
-  bankAccounts     EqubBankAccount[]
-  bankTransactions BankTransaction[]
-  lotteryDraws     LotteryDraw[]
-  notifications    Notification[]
-  auditLogs        AuditLog[]
+  memberships          EqubMembership[]
+  admins               EqubAdmin[]
+  periods              PaymentPeriod[]
+  bankAccounts         EqubBankAccount[]
+  bankTransactions     BankTransaction[]
+  lotteryDraws         LotteryDraw[]
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  bankStatementImports BankStatementImport[]
 
   @@index([status])
   @@index([createdById])
@@ -149,7 +149,6 @@ model EqubAdmin {
 // PAYMENT PERIOD
 // ============================================================
 
-
 model PaymentPeriod {
   id String @id @default(uuid())
 
@@ -179,11 +178,9 @@ model PaymentPeriod {
   @@index([status])
 }
 
-
 // ============================================================
 // PAYMENT
 // ============================================================
-
 
 model PaymentAllocation {
   id String @id @default(uuid())
@@ -201,11 +198,9 @@ model PaymentAllocation {
 
   // A payment cannot allocate to the same period twice
   @@unique([paymentId, periodId])
-
   @@index([paymentId])
   @@index([periodId])
 }
-
 
 model Payment {
   id String @id @default(uuid())
@@ -238,7 +233,6 @@ model Payment {
   @@index([userId])
   @@index([status])
 }
-
 
 // ============================================================
 // RECEIPT
@@ -325,14 +319,19 @@ model BankTransaction {
 
   senderName    String?
   senderAccount String?
-
+reviewStatus BankTransactionReviewStatus @default(PENDING)
+reviewedById String?
+reviewedAt DateTime?
+reviewReason String?
   receiverName    String?
   receiverAccount String?
 
   amount          Decimal  @db.Decimal(12, 2)
   transactionDate DateTime
 
-  description String?
+  description       String?
+  statementImportId String?
+  statementImport   BankStatementImport? @relation(fields: [statementImportId], references: [id], onDelete: SetNull)
 
   status BankTransactionStatus @default(UNMATCHED)
 
@@ -349,6 +348,7 @@ model BankTransaction {
   @@index([transactionDate])
   @@index([status])
   @@index([matchedPaymentId])
+  @@index([statementImportId])
 }
 
 // ============================================================
@@ -416,6 +416,46 @@ model LotteryDraw {
   @@index([status])
   @@index([winnerMembershipId])
   @@index([equbId])
+}
+
+// ============================================================
+// BANK STATEMENT IMPORT
+// ============================================================
+
+model BankStatementImport {
+  id String @id @default(uuid())
+
+  equbId String
+  equb   Equb   @relation(fields: [equbId], references: [id], onDelete: Cascade)
+
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+
+  originalFileName String
+  storageKey       String
+  mimeType         String
+  fileSize         Int
+
+  source BankTransactionSource @default(BANK_STATEMENT)
+
+  status BankStatementImportStatus @default(UPLOADED)
+
+  transactionCount Int @default(0)
+  importedCount    Int @default(0)
+  failedCount      Int @default(0)
+
+  errorMessage String?
+  previewData  Json?
+
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  transactions BankTransaction[]
+
+  @@index([equbId])
+  @@index([uploadedById])
+  @@index([status])
+  @@index([createdAt])
 }
 
 // ============================================================
@@ -573,6 +613,14 @@ enum UserRole {
   SUPER_ADMIN
 }
 
+enum BankStatementImportStatus {
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
 enum EqubStatus {
   PENDING
   ACTIVE
@@ -629,6 +677,11 @@ enum ReceiptStatus {
   PROCESSING
   PROCESSED
   VERIFIED
+  REJECTED
+}
+enum BankTransactionReviewStatus {
+  PENDING
+  APPROVED
   REJECTED
 }
 

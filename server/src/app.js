@@ -7,7 +7,7 @@ import membershipRoutes from "./routes/membership.routes.js";
 import equbRoutes from "./routes/equb.routes.js";
 import receiptRoutes from "./routes/receipt.routes.js";
 import lotteryRoutes from "./routes/lottery.routes.js";
-
+import bankStatementRoutes from "./routes/bankStatement.routes.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import { loginLimiter } from "./middleware/loginLimiter.js";
 
@@ -36,5 +36,5 @@ app.use("/api", membershipRoutes);
 app.use("/api/equbs", equbRoutes);
 app.use("/api", receiptRoutes);
 app.use("/api", lotteryRoutes);
-
+app.use("/api", bankStatementRoutes);
 export default app;
