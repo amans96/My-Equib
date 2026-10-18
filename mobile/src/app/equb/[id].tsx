@@ -181,13 +181,13 @@ export default function EqubHomeScreen() {
         </Pressable>
 
         <Pressable
-         onPress={() => {
-  if (router.canGoBack()) {
-    router.back();
-  } else {
-    router.replace("/"); // Replace with the correct fallback route.
-  }
-}}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace("/"); // Replace with the correct fallback route.
+            }
+          }}
           className="mt-5"
         >
           <Text className="font-semibold text-slate-600">
@@ -241,33 +241,33 @@ export default function EqubHomeScreen() {
    * src/app/equb/[id]/receipts.tsx
    * src/app/equb/[id]/history.tsx
    */
-const quickLinks = [
-  {
-    title: "Payments",
-    description: "Contributions and payment status",
-    icon: CreditCard,
-    route: `/equb/${id}/payments`,
-  },
-  {
-    title: "Lottery",
-    description: "Draws and previous winners",
-    icon: Trophy,
-    route: `/equb/${id}/lottery`,
-  },
-  {
-    title: "Notifications",
-    description: "Equb announcements and updates",
-    icon: Bell,
-    route: `/equb/${id}/notifications`,
-  },
-  {
-    title: "History",
-    description: "Your Equb activity and records",
-    icon: History,
-    route: `/equb/${id}/history`,
-  },
-];
-  
+  const quickLinks = [
+    {
+      title: "Payments",
+      description: "Contributions and payment status",
+      icon: CreditCard,
+      route: `/equb/${id}/payments`,
+    },
+    {
+      title: "Lottery",
+      description: "Draws and previous winners",
+      icon: Trophy,
+      route: `/equb/${id}/lottery`,
+    },
+    {
+      title: "Notifications",
+      description: "Equb announcements and updates",
+      icon: Bell,
+      route: `/equb/${id}/notifications`,
+    },
+    {
+      title: "Lottery History",
+      description: "View winners and draw status for every period",
+      icon: History,
+      route: `/equb/${id}/lottery-history`,
+    },
+  ];
+
 
   return (
     <View className="flex-1 bg-slate-50">
@@ -286,13 +286,13 @@ const quickLinks = [
         {/* Header */}
         <View className="px-5 pb-5 pt-14">
           <Pressable
-           onPress={() => {
-  if (router.canGoBack()) {
-    router.back();
-  } else {
-    router.replace("/"); // Replace with the correct fallback route.
-  }
-}}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace("/"); // Replace with the correct fallback route.
+              }
+            }}
             className="mb-6 h-10 w-10 items-center justify-center rounded-full bg-white"
           >
             <ArrowLeft
@@ -529,7 +529,7 @@ const quickLinks = [
           </View>
 
           {membership.totalPaid !==
-          undefined ? (
+            undefined ? (
             <View className="mt-4 flex-row justify-between">
               <Text className="text-sm text-slate-500">
                 Total paid
@@ -546,7 +546,7 @@ const quickLinks = [
           ) : null}
 
           {membership.missedPayments !==
-          undefined ? (
+            undefined ? (
             <View className="mt-4 flex-row justify-between">
               <Text className="text-sm text-slate-500">
                 Missed payments

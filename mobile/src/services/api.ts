@@ -1,6 +1,6 @@
 import { getToken } from "./storage";
 
-const API_URL = "http://10.24.49.65:5000/api";
+const API_URL = "http://10.12.25.65:5000/api";
 
 export async function apiRequest<T>(
   endpoint: string,
@@ -46,8 +46,8 @@ export async function apiRequest<T>(
   if (!response.ok) {
     const message =
       typeof data === "object" &&
-      data !== null &&
-      "message" in data
+        data !== null &&
+        "message" in data
         ? String(data.message)
         : typeof data === "string" && data
           ? data
@@ -58,3 +58,32 @@ export async function apiRequest<T>(
 
   return data as T;
 }
+
+export const api = {
+  get: async <T = any>(endpoint: string, options: RequestInit = {}): Promise<{ data: T }> => {
+    const data = await apiRequest<T>(endpoint, { ...options, method: "GET" });
+    return { data };
+  },
+  post: async <T = any>(endpoint: string, body?: any, options: RequestInit = {}): Promise<{ data: T }> => {
+    const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+    const data = await apiRequest<T>(endpoint, {
+      ...options,
+      method: "POST",
+      body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    return { data };
+  },
+  patch: async <T = any>(endpoint: string, body?: any, options: RequestInit = {}): Promise<{ data: T }> => {
+    const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+    const data = await apiRequest<T>(endpoint, {
+      ...options,
+      method: "PATCH",
+      body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    return { data };
+  },
+  delete: async <T = any>(endpoint: string, options: RequestInit = {}): Promise<{ data: T }> => {
+    const data = await apiRequest<T>(endpoint, { ...options, method: "DELETE" });
+    return { data };
+  },
+};
