@@ -1209,12 +1209,24 @@ const allocations = await prisma.paymentAllocation.findMany({
     },
   },
   select: {
+    id: true,
     periodId: true,
     amount: true,
     payment: {
       select: {
+        id: true,
         status: true,
+        expectedAmount: true,
         paidAmount: true,
+        paymentDate: true,
+        receipts: {
+          select: {
+            id: true,
+            imageUrl: true,
+            status: true,
+            uploadedAt: true,
+          },
+        },
       },
     },
   },

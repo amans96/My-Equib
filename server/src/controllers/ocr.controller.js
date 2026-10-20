@@ -280,17 +280,29 @@ const extractStructuredData = (rawText) => {
   };
 };
 
+
 export const processOCR = async (req, res) => {
   try {
     const { receiptId } = req.params;
 
-    // -------------------------------------------------------
-    // 1. Find receipt
-    // -------------------------------------------------------
-
+    // 1. Find receipt and its payment, membership and Equb
     const receipt = await prisma.receipt.findUnique({
-      where: {
-        id: receiptId,
+      where: { id: receiptId },
+      include: {
+        payment: {
+          include: {
+            membership: {
+              include: {
+                equb: true,
+              },
+            },
+            allocations: {
+              include: {
+                period: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -301,10 +313,6 @@ export const processOCR = async (req, res) => {
       });
     }
 
-    // -------------------------------------------------------
-    // 2. Prevent duplicate OCR processing
-    // -------------------------------------------------------
-
     if (receipt.ocrProcessed) {
       return res.status(409).json({
         success: false,
@@ -312,10 +320,14 @@ export const processOCR = async (req, res) => {
       });
     }
 
-    // -------------------------------------------------------
-    // 3. Build absolute image path
-    // -------------------------------------------------------
+    if (!receipt.payment) {
+      return res.status(400).json({
+        success: false,
+        message: "Receipt has no associated payment",
+      });
+    }
 
+    // 2. Build and validate the image path
     const relativeImagePath = receipt.imageUrl
       .replace(/^\/+/, "")
       .replace(/\//g, path.sep);
@@ -325,175 +337,320 @@ export const processOCR = async (req, res) => {
       relativeImagePath
     );
 
-    console.log("OCR IMAGE PATH:", imagePath);
-
-    // -------------------------------------------------------
-    // 4. Make sure image exists
-    // -------------------------------------------------------
-
     if (!fs.existsSync(imagePath)) {
       return res.status(404).json({
         success: false,
         message: "Receipt image file not found",
-        imagePath,
       });
     }
 
-    // -------------------------------------------------------
-    // 5. Mark receipt as processing
-    // -------------------------------------------------------
-
+    // 3. Mark receipt as processing
     await prisma.receipt.update({
-      where: {
-        id: receipt.id,
-      },
-      data: {
-        status: "PROCESSING",
-      },
+      where: { id: receipt.id },
+      data: { status: "PROCESSING" },
     });
 
-    // -------------------------------------------------------
-    // 6. Send image to OCR service
-    // -------------------------------------------------------
-
+    // 4. Run OCR
     const ocrResult = await processReceiptOCR(imagePath);
-
-    console.log("RAW OCR RESULT:", ocrResult);
-
-    // -------------------------------------------------------
-    // 7. Get raw OCR text
-    // -------------------------------------------------------
-
     const rawText = ocrResult?.rawText || "";
-
-    // -------------------------------------------------------
-    // 8. Extract structured fields from raw text
-    // -------------------------------------------------------
 
     const extractedData = extractStructuredData(rawText);
 
-    console.log(
-      "STRUCTURED OCR DATA:",
-      extractedData
-    );
-
-    // -------------------------------------------------------
-    // 9. Prefer structured values from OCR service if they
-    //    already exist.
-    //
-    //    Otherwise use our raw-text extraction.
-    // -------------------------------------------------------
-
+    // 5. Extract receipt information
     const transactionReference =
       ocrResult?.transactionReference ||
-      extractedData.transactionReference;
+      extractedData.transactionReference ||
+      null;
 
     const senderName =
       ocrResult?.senderName ||
-      extractedData.senderName;
+      extractedData.senderName ||
+      null;
 
     const senderAccount =
       ocrResult?.senderAccount ||
-      extractedData.senderAccount;
+      extractedData.senderAccount ||
+      null;
 
     const receiverName =
       ocrResult?.receiverName ||
-      extractedData.receiverName;
+      extractedData.receiverName ||
+      null;
 
     const receiverAccount =
       ocrResult?.receiverAccount ||
-      extractedData.receiverAccount;
+      extractedData.receiverAccount ||
+      null;
 
-    const amount =
+    const rawAmount =
       ocrResult?.amount ??
-      extractedData.amount;
+      extractedData.amount ??
+      null;
 
     const transactionDate =
       ocrResult?.transactionDate ||
-      extractedData.transactionDate;
+      extractedData.transactionDate ||
+      null;
 
     const bankName =
       ocrResult?.bankName ||
-      extractedData.bankName;
+      extractedData.bankName ||
+      null;
 
     const confidence =
       ocrResult?.confidence ?? null;
 
-    // -------------------------------------------------------
-    // 10. Save OCR data
-    // -------------------------------------------------------
+    // Convert amounts such as "ETB 9,000.00" to 9000
+    let amount = null;
 
-    const ocrData = await prisma.oCRData.create({
-      data: {
-        receiptId: receipt.id,
+    if (
+      typeof rawAmount === "number" &&
+      Number.isFinite(rawAmount)
+    ) {
+      amount = rawAmount;
+    } else if (
+      typeof rawAmount === "string" &&
+      rawAmount.trim()
+    ) {
+      const normalizedAmount = Number(
+        rawAmount.replace(/,/g, "").replace(/[^\d.-]/g, "")
+      );
 
-        transactionReference,
+      if (Number.isFinite(normalizedAmount)) {
+        amount = normalizedAmount;
+      }
+    }
 
-        senderName,
+    const payment = receipt.payment;
+    const membership = payment.membership;
+    const equb = membership.equb;
 
-        senderAccount,
+    // 6. Calculate the contribution for one period
+    const amountPerPeriod =
+      Number(equb.contributionAmount) *
+      Number(membership.shares);
 
-        receiverName,
+    let allocationPeriods = [];
+    let reviewReason = null;
 
-        receiverAccount,
+    // 7. Validate the OCR amount
+    if (
+      amount === null ||
+      amount <= 0 ||
+      !Number.isFinite(amountPerPeriod) ||
+      amountPerPeriod <= 0
+    ) {
+      reviewReason =
+        "OCR could not determine a valid payment amount.";
+    } else {
+      const periodsNeeded = Math.round(
+        amount / amountPerPeriod
+      );
 
-        amount,
+      // Only automatically allocate complete contributions
+      if (
+        periodsNeeded < 1 ||
+        Math.abs(
+          amount - periodsNeeded * amountPerPeriod
+        ) > 0.01
+      ) {
+        reviewReason =
+          "The OCR amount does not match a whole number of period contributions.";
+      } else {
+        // 8. Find the last verified period for this membership
+        const verifiedPayments =
+          await prisma.payment.findMany({
+            where: {
+              membershipId: membership.id,
+              status: "VERIFIED",
+            },
+            include: {
+              allocations: {
+                include: {
+                  period: true,
+                },
+              },
+            },
+          });
 
-        transactionDate,
+        let lastVerifiedPeriodNumber = 0;
 
-        bankName,
+        for (const verifiedPayment of verifiedPayments) {
+          for (const allocation of verifiedPayment.allocations) {
+            lastVerifiedPeriodNumber = Math.max(
+              lastVerifiedPeriodNumber,
+              allocation.period.periodNumber
+            );
+          }
+        }
 
-        rawText,
+        // 9. Find periods already reserved by other payments.
+        // Rejected payments do not reserve periods.
+        const otherPayments =
+          await prisma.payment.findMany({
+            where: {
+              membershipId: membership.id,
+              id: { not: payment.id },
+              status: { not: "REJECTED" },
+            },
+            include: {
+              allocations: true,
+            },
+          });
 
-        confidence,
+        const occupiedPeriodIds = new Set(
+          otherPayments.flatMap((otherPayment) =>
+            otherPayment.allocations.map(
+              (allocation) => allocation.periodId
+            )
+          )
+        );
 
-        processedAt: new Date(),
-      },
-    });
+        // 10. Load future periods in order
+        const periods = await prisma.paymentPeriod.findMany({
+          where: {
+            equbId: equb.id,
+            periodNumber: {
+              gt: lastVerifiedPeriodNumber,
+            },
+          },
+          orderBy: {
+            periodNumber: "asc",
+          },
+        });
 
-    // -------------------------------------------------------
-    // 11. Mark receipt as processed
-    // -------------------------------------------------------
+        // Allocate consecutively. Never skip a blocked period.
+        for (let i = 1; i <= periodsNeeded; i++) {
+          const expectedPeriodNumber =
+            lastVerifiedPeriodNumber + i;
 
-    const updatedReceipt =
-      await prisma.receipt.update({
+          const nextPeriod = periods.find(
+            (period) =>
+              period.periodNumber === expectedPeriodNumber
+          );
+
+          if (!nextPeriod) {
+            reviewReason =
+              "There are not enough consecutive future periods.";
+            break;
+          }
+
+          if (
+            !["OPEN", "UPCOMING"].includes(nextPeriod.status)
+          ) {
+            reviewReason =
+              `Period ${expectedPeriodNumber} is not eligible for automatic allocation.`;
+            break;
+          }
+
+          if (occupiedPeriodIds.has(nextPeriod.id)) {
+            reviewReason =
+              `Period ${expectedPeriodNumber} already has another payment.`;
+            break;
+          }
+
+          allocationPeriods.push(nextPeriod);
+        }
+      }
+    }
+
+    // 11. Save OCR data and update allocations atomically
+    const result = await prisma.$transaction(async (tx) => {
+      const ocrData = await tx.oCRData.create({
+        data: {
+          receiptId: receipt.id,
+          transactionReference,
+          senderName,
+          senderAccount,
+          receiverName,
+          receiverAccount,
+          amount,
+          transactionDate,
+          bankName,
+          rawText,
+          confidence,
+          processedAt: new Date(),
+        },
+      });
+
+      let allocationsCreated = false;
+
+      if (!reviewReason) {
+        // Replace old allocations only when a complete,
+        // valid allocation plan is ready.
+        await tx.paymentAllocation.deleteMany({
+          where: {
+            paymentId: payment.id,
+          },
+        });
+
+        for (const period of allocationPeriods) {
+          await tx.paymentAllocation.create({
+            data: {
+              paymentId: payment.id,
+              periodId: period.id,
+              amount: amountPerPeriod,
+            },
+          });
+        }
+
+        allocationsCreated = true;
+      }
+
+      // Unclear amounts require manual review.
+      const updatedPayment = await tx.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          status: reviewReason
+            ? "NEEDS_REVIEW"
+            : "PENDING",
+        },
+      });
+
+      const updatedReceipt = await tx.receipt.update({
         where: {
           id: receipt.id,
         },
-
         data: {
           status: "PROCESSED",
           ocrProcessed: true,
         },
-
         include: {
           ocrData: true,
         },
       });
 
-    // -------------------------------------------------------
-    // 12. Return result to frontend
-    // -------------------------------------------------------
+      return {
+        ocrData,
+        payment: updatedPayment,
+        receipt: updatedReceipt,
+        allocationsCreated,
+      };
+    });
 
+    // 12. Return the result
     return res.status(200).json({
       success: true,
-
-      message:
-        "Receipt OCR processed successfully",
-
-      receipt: updatedReceipt,
-
-      ocrData,
+      message: result.allocationsCreated
+        ? "OCR completed and payment periods allocated successfully."
+        : "OCR completed, but the payment requires manual review.",
+      receipt: result.receipt,
+      ocrData: result.ocrData,
+      payment: result.payment,
+      allocationsCreated: result.allocationsCreated,
+      allocatedPeriods: result.allocationsCreated
+        ? allocationPeriods.map((period) => ({
+            periodId: period.id,
+            periodNumber: period.periodNumber,
+            amount: amountPerPeriod,
+          }))
+        : [],
+      reviewReason: reviewReason || null,
     });
   } catch (error) {
-    console.error(
-      "OCR controller error:",
-      error
-    );
-
-    // -------------------------------------------------------
-    // If OCR fails, mark receipt back to UPLOADED
-    // -------------------------------------------------------
+    console.error("OCR controller error:", error);
 
     try {
       if (req.params.receiptId) {
@@ -501,7 +658,6 @@ export const processOCR = async (req, res) => {
           where: {
             id: req.params.receiptId,
           },
-
           data: {
             status: "UPLOADED",
           },
@@ -516,10 +672,7 @@ export const processOCR = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-
-      message:
-        "Failed to process receipt",
-
+      message: "Failed to process receipt",
       error: error.message,
     });
   }
