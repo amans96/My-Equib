@@ -216,6 +216,7 @@ model Payment {
   // The total amount sent in this bank transaction
   expectedAmount Decimal  @db.Decimal(12, 2)
   paidAmount     Decimal? @db.Decimal(12, 2)
+  extraAmount Decimal  @default(0) @db.Decimal(12,2)
 
   status PaymentStatus @default(PENDING)
 

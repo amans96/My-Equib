@@ -815,13 +815,14 @@ export const processOCR = async (req, res) => {
 // ============================================================
 
 
+
 export const approvePayment = async (req, res) => {
   try {
     const { receiptId } = req.params;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
-    // 1. Only admins can approve payments
+    // 1. Only admins can approve payments.
     if (
       userRole !== "ADMIN" &&
       userRole !== "SUPER_ADMIN"
@@ -832,7 +833,7 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    // 2. Find receipt, payment, allocations and OCR data
+    // 2. Find receipt, payment, allocations and OCR data.
     const receipt = await prisma.receipt.findUnique({
       where: { id: receiptId },
       include: {
@@ -875,7 +876,7 @@ export const approvePayment = async (req, res) => {
     const payment = receipt.payment;
     const allocations = payment.allocations;
 
-    // 3. Payment must have allocations
+    // 3. Payment must have period allocations.
     if (!allocations.length) {
       return res.status(400).json({
         success: false,
@@ -884,7 +885,7 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    // 4. ADMIN can only approve payments for their own Equb
+    // 4. ADMIN can only approve payments for their own Equb.
     const unauthorizedAllocation = allocations.some(
       (allocation) =>
         allocation.period.equb.createdById !== userId
@@ -901,7 +902,7 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    // 5. Prevent duplicate approval or approval after rejection
+    // 5. Prevent duplicate approval or approval after rejection.
     if (payment.status === "VERIFIED") {
       return res.status(409).json({
         success: false,
@@ -928,14 +929,7 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    if (receipt.status === "REJECTED") {
-      return res.status(409).json({
-        success: false,
-        message: "This receipt has been rejected",
-      });
-    }
-
-    // 6. OCR must provide a valid amount
+    // 6. OCR must provide a valid amount.
     const verifiedAmount = Number(receipt.ocrData.amount);
 
     if (
@@ -951,24 +945,30 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    // 7. The receipt amount must match all allocations combined
-    const allocatedAmount = allocations.reduce(
+    // 7. Calculate allocated amount and extra amount in cents.
+    const allocatedCents = allocations.reduce(
       (total, allocation) =>
-        total + Number(allocation.amount),
+        total + Math.round(Number(allocation.amount) * 100),
       0
     );
 
-    if (Math.abs(verifiedAmount - allocatedAmount) > 0.01) {
+    const ocrCents = Math.round(verifiedAmount * 100);
+    const extraCents = ocrCents - allocatedCents;
+
+    if (extraCents < 0) {
       return res.status(400).json({
         success: false,
         message:
-          "OCR amount does not match the total allocated amount. Payment requires review.",
+          "Allocated amount exceeds the OCR receipt amount. Payment requires review.",
         ocrAmount: verifiedAmount,
-        allocatedAmount,
+        allocatedAmount: allocatedCents / 100,
       });
     }
 
-    // 8. All allocations must belong to the same Equb
+    const allocatedAmount = allocatedCents / 100;
+    const extraAmount = extraCents / 100;
+
+    // 8. All allocations must belong to the same Equb.
     const equbIds = new Set(
       allocations.map(
         (allocation) => allocation.period.equbId
@@ -983,9 +983,8 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    // 9. Update payment, verification and receipt atomically
+    // 9. Update payment, verification and receipt atomically.
     const result = await prisma.$transaction(async (tx) => {
-      // Recheck payment status inside the transaction
       const currentPayment = await tx.payment.findUnique({
         where: { id: payment.id },
       });
@@ -1005,6 +1004,7 @@ export const approvePayment = async (req, res) => {
         data: {
           status: "VERIFIED",
           paidAmount: verifiedAmount,
+          extraAmount,
           paymentDate:
             receipt.ocrData.transactionDate ||
             payment.paymentDate,
@@ -1039,13 +1039,19 @@ export const approvePayment = async (req, res) => {
       };
     });
 
-    // 10. Return response
+    // 10. Return payment totals and the saved extra amount.
     return res.status(200).json({
       success: true,
       message: "Payment approved successfully",
       payment: result.payment,
       verification: result.verification,
       receipt: result.receipt,
+      summary: {
+        ocrAmount: verifiedAmount,
+        allocatedAmount,
+        extraAmount,
+        periodsCovered: allocations.length,
+      },
     });
   } catch (error) {
     console.error("Approve Payment Error:", error);
@@ -1067,6 +1073,7 @@ export const approvePayment = async (req, res) => {
     });
   }
 };
+
 
 
 // ============================================================
