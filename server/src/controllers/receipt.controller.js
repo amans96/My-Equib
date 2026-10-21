@@ -10,12 +10,13 @@ import { processReceiptOCR } from "../services/ocr.service.js";
 // ============================================================
 
 
+
 export const uploadReceipt = async (req, res) => {
   try {
     const { periodId } = req.params;
     const userId = req.user.userId;
 
-    // 1. Validate uploaded file
+    // 1. Validate the uploaded file.
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -23,11 +24,9 @@ export const uploadReceipt = async (req, res) => {
       });
     }
 
-    // 2. Find payment period and Equb
+    // 2. Find the payment period and its Equb.
     const period = await prisma.paymentPeriod.findUnique({
-      where: {
-        id: periodId,
-      },
+      where: { id: periodId },
       include: {
         equb: {
           select: {
@@ -48,7 +47,7 @@ export const uploadReceipt = async (req, res) => {
       });
     }
 
-    // 3. Find the member's active membership
+    // 3. Verify that the member has an active membership.
     const membership = await prisma.equbMembership.findFirst({
       where: {
         userId,
@@ -64,15 +63,26 @@ export const uploadReceipt = async (req, res) => {
       });
     }
 
-    // 4. Find an existing payment allocated to this period
+    // 4. Find an existing payment either submitted for this
+    // period or already allocated to this period.
+    //
+    // This is important because a newly uploaded payment might
+    // not have any allocations until OCR/payment matching runs.
     const existingPayment = await prisma.payment.findFirst({
       where: {
         membershipId: membership.id,
-        allocations: {
-          some: {
-            periodId: period.id,
+        OR: [
+          {
+            submittedForPeriodId: period.id,
           },
-        },
+          {
+            allocations: {
+              some: {
+                periodId: period.id,
+              },
+            },
+          },
+        ],
       },
       include: {
         receipts: {
@@ -86,9 +96,12 @@ export const uploadReceipt = async (req, res) => {
           },
         },
       },
+      orderBy: {
+        updatedAt: "desc",
+      },
     });
 
-    // 5. Handle an existing payment
+    // 5. Handle an existing payment.
     if (existingPayment) {
       const canReplaceReceipt = [
         "REJECTED",
@@ -104,7 +117,7 @@ export const uploadReceipt = async (req, res) => {
         });
       }
 
-      // Attach a replacement receipt to the existing payment
+      // Attach the replacement receipt to the existing payment.
       const receipt = await prisma.receipt.create({
         data: {
           paymentId: existingPayment.id,
@@ -115,16 +128,20 @@ export const uploadReceipt = async (req, res) => {
           mimeType: req.file.mimetype,
           fileSize: req.file.size,
           status: "UPLOADED",
+          ocrProcessed: false,
         },
       });
 
-      // Reset payment for OCR and review
+      // Reset the payment for a new OCR/review attempt.
+      // Preserve its existing allocations and extra amount.
       const updatedPayment = await prisma.payment.update({
         where: {
           id: existingPayment.id,
         },
         data: {
           status: "PENDING",
+          submittedForPeriodId:
+            existingPayment.submittedForPeriodId ?? period.id,
         },
         include: {
           receipts: {
@@ -149,19 +166,21 @@ export const uploadReceipt = async (req, res) => {
       });
     }
 
-    // 6. Calculate the expected contribution for one period.
-    // This is NOT the confirmed amount paid.
+    // 6. Calculate the expected contribution.
+    // This is not the actual amount paid or OCR-confirmed amount.
     const expectedAmount =
       Number(period.equb.contributionAmount) *
       Number(membership.shares);
 
-    // 7. Create the pending payment and receipt.
-    // Actual period allocations will be created after OCR
-    // successfully extracts and validates the receipt amount.
+    // 7. Create the payment and receipt.
+    //
+    // submittedForPeriodId makes this payment discoverable by the
+    // admin immediately, before allocations are created.
     const payment = await prisma.payment.create({
       data: {
         membershipId: membership.id,
         userId,
+        submittedForPeriodId: period.id,
         expectedAmount,
         status: "PENDING",
 
@@ -174,11 +193,19 @@ export const uploadReceipt = async (req, res) => {
             mimeType: req.file.mimetype,
             fileSize: req.file.size,
             status: "UPLOADED",
+            ocrProcessed: false,
           },
         },
       },
       include: {
-        receipts: true,
+        receipts: {
+          include: {
+            ocrData: true,
+          },
+          orderBy: {
+            uploadedAt: "desc",
+          },
+        },
         allocations: {
           include: {
             period: true,
@@ -190,8 +217,10 @@ export const uploadReceipt = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Receipt uploaded successfully. Payment amount will be determined by OCR.",
+      message:
+        "Receipt uploaded successfully. Payment amount will be determined by OCR.",
       payment,
+      receipt: payment.receipts[0] ?? null,
     });
   } catch (error) {
     console.error("Upload Receipt Error:", error);
@@ -205,10 +234,12 @@ export const uploadReceipt = async (req, res) => {
 };
 
 
+
 // ============================================================
 // GET PAYMENT PERIOD DETAILS
 // GET /api/payment-periods/:periodId
 // ============================================================
+
 
 
 export const getPaymentPeriodDetails = async (req, res) => {
@@ -217,7 +248,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
     const userId = req.user.userId;
     const userRole = req.user.role;
 
-    // 1. Find payment period
+    // 1. Find the payment period and Equb.
     const period = await prisma.paymentPeriod.findUnique({
       where: { id: periodId },
       include: {
@@ -242,7 +273,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
       });
     }
 
-    // 2. Authorize administrator
+    // 2. Authorize the administrator.
     if (
       userRole !== "SUPER_ADMIN" &&
       (
@@ -257,7 +288,15 @@ export const getPaymentPeriodDetails = async (req, res) => {
       });
     }
 
-    // 3. Get active memberships and payments allocated to this period
+    // 3. Get active memberships and payments associated with
+    // this period.
+    //
+    // A payment is associated with the period when either:
+    // - it was originally submitted for this period, or
+    // - it has a monetary allocation for this period.
+    //
+    // This ensures newly uploaded receipts appear before OCR
+    // or payment matching creates their allocations.
     const memberships = await prisma.equbMembership.findMany({
       where: {
         equbId: period.equbId,
@@ -276,16 +315,23 @@ export const getPaymentPeriodDetails = async (req, res) => {
         },
         payments: {
           where: {
-            allocations: {
-              some: {
-                periodId,
+            OR: [
+              {
+                submittedForPeriodId: period.id,
               },
-            },
+              {
+                allocations: {
+                  some: {
+                    periodId: period.id,
+                  },
+                },
+              },
+            ],
           },
           include: {
             allocations: {
               where: {
-                periodId,
+                periodId: period.id,
               },
             },
             receipts: {
@@ -319,7 +365,6 @@ export const getPaymentPeriodDetails = async (req, res) => {
     });
 
     // 4. Choose the most relevant payment for this period.
-    // Prefer verified, then pending/reviewable, then rejected.
     const statusPriority = {
       VERIFIED: 1,
       UNDER_REVIEW: 2,
@@ -335,10 +380,8 @@ export const getPaymentPeriodDetails = async (req, res) => {
     const members = memberships.map((membership) => {
       const sortedPayments = [...membership.payments].sort(
         (a, b) => {
-          const priorityA =
-            statusPriority[a.status] ?? 99;
-          const priorityB =
-            statusPriority[b.status] ?? 99;
+          const priorityA = statusPriority[a.status] ?? 99;
+          const priorityB = statusPriority[b.status] ?? 99;
 
           if (priorityA !== priorityB) {
             return priorityA - priorityB;
@@ -352,6 +395,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
       );
 
       const payment = sortedPayments[0] || null;
+
       const allocation = payment?.allocations?.[0] || null;
       const receipt = payment?.receipts?.[0] || null;
       const verification = payment?.verifications?.[0] || null;
@@ -377,15 +421,19 @@ export const getPaymentPeriodDetails = async (req, res) => {
               id: payment.id,
               expectedAmount: Number(payment.expectedAmount),
 
-              // Amount allocated to THIS period
+              // Amount allocated to this period only.
               allocatedAmount: allocation
                 ? Number(allocation.amount)
                 : null,
 
+              // Full transaction amount, if known.
               paidAmount:
                 payment.paidAmount !== null
                   ? Number(payment.paidAmount)
                   : null,
+
+              // Preserve the transaction's unallocated extra amount.
+              extraAmount: Number(payment.extraAmount ?? 0),
 
               status: payment.status,
               paymentDate: payment.paymentDate,
@@ -459,7 +507,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
       };
     });
 
-    // 5. Calculate summaries for this period only
+    // 5. Calculate summaries for this period.
     const totalMembers = members.length;
 
     const paidMembers = members.filter(
@@ -469,8 +517,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
     ).length;
 
     const verifiedMembers = members.filter(
-      (member) =>
-        member.payment?.status === "VERIFIED"
+      (member) => member.payment?.status === "VERIFIED"
     ).length;
 
     const pendingMembers = members.filter(
@@ -488,8 +535,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
     ).length;
 
     const rejectedMembers = members.filter(
-      (member) =>
-        member.payment?.status === "REJECTED"
+      (member) => member.payment?.status === "REJECTED"
     ).length;
 
     const missingMembers = members.filter(
@@ -501,8 +547,8 @@ export const getPaymentPeriodDetails = async (req, res) => {
       0
     );
 
-    // Count verified allocations for this period,
-    // not the full multi-period payment amount.
+    // Only count verified allocations for this period.
+    // Do not count the full amount of a multi-period transaction.
     const totalPaid = members.reduce(
       (total, member) =>
         total +
@@ -514,7 +560,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
       0
     );
 
-    // 6. Return details
+    // 6. Return the period, Equb, summary, and member details.
     return res.status(200).json({
       success: true,
 
@@ -554,10 +600,7 @@ export const getPaymentPeriodDetails = async (req, res) => {
       members,
     });
   } catch (error) {
-    console.error(
-      "Get Payment Period Details Error:",
-      error
-    );
+    console.error("Get Payment Period Details Error:", error);
 
     return res.status(500).json({
       success: false,
@@ -569,10 +612,15 @@ export const getPaymentPeriodDetails = async (req, res) => {
 };
 
 
+
+
 // ============================================================
 // PROCESS OCR
 // POST /api/receipts/:receiptId/ocr
 // ============================================================
+
+
+
 
 export const processOCR = async (req, res) => {
   let receiptId;
@@ -583,20 +631,27 @@ export const processOCR = async (req, res) => {
     const userId = req.user.userId;
     const userRole = req.user.role;
 
-    // 1. Find receipt, payment and period allocations
+    if (userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to process OCR",
+      });
+    }
+
+    // 1. Load receipt, payment, membership, period and OCR data.
     const receipt = await prisma.receipt.findUnique({
-      where: {
-        id: receiptId,
-      },
+      where: { id: receiptId },
       include: {
         payment: {
           include: {
+            membership: true,
+            submittedForPeriod: {
+              include: { equb: true },
+            },
             allocations: {
               include: {
                 period: {
-                  include: {
-                    equb: true,
-                  },
+                  include: { equb: true },
                 },
               },
             },
@@ -606,65 +661,57 @@ export const processOCR = async (req, res) => {
       },
     });
 
-    if (!receipt) {
+    if (!receipt?.payment) {
       return res.status(404).json({
         success: false,
-        message: "Receipt not found",
+        message: receipt
+          ? "Payment associated with receipt was not found"
+          : "Receipt not found",
       });
     }
 
-    if (!receipt.payment) {
-      return res.status(404).json({
-        success: false,
-        message:
-          "Payment associated with receipt was not found",
-      });
-    }
+    const payment = receipt.payment;
 
-    // 2. Only admins can process OCR
-    if (
-      userRole !== "ADMIN" &&
-      userRole !== "SUPER_ADMIN"
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "You are not authorized to process OCR",
-      });
-    }
+    // 2. Determine the starting period.
+    const startingPeriod =
+      payment.submittedForPeriod ??
+      payment.allocations[0]?.period ??
+      null;
 
-    // 3. Ensure payment has an allocation
-    const allocation = receipt.payment.allocations[0];
-
-    if (!allocation) {
+    if (!startingPeriod) {
       return res.status(400).json({
         success: false,
         message:
-          "Payment is not associated with a payment period",
+          "Payment has no submission period. Associate it with a payment period first.",
       });
     }
 
-    // 4. An ADMIN can only process receipts for their own Equb
     if (
       userRole === "ADMIN" &&
-      allocation.period.equb.createdById !== userId
+      startingPeriod.equb.createdById !== userId
     ) {
       return res.status(403).json({
         success: false,
-        message:
-          "You are not authorized to process this receipt",
+        message: "You are not authorized to process this receipt",
       });
     }
 
-    // 5. Prevent duplicate OCR processing
     if (receipt.ocrProcessed && receipt.ocrData) {
       return res.status(409).json({
         success: false,
-        message: "OCR has already been processed for this receipt",
+        message:
+          "OCR has already been processed. Do not process the same receipt again.",
         ocrData: receipt.ocrData,
       });
     }
 
-    // 6. Build local image path
+    if (!receipt.storageKey) {
+      return res.status(400).json({
+        success: false,
+        message: "Receipt storage key is missing",
+      });
+    }
+
     const fileName = path.basename(receipt.storageKey);
 
     const imagePath = path.join(
@@ -674,36 +721,24 @@ export const processOCR = async (req, res) => {
       fileName
     );
 
-    console.log("OCR imagePath:", imagePath);
-
     if (!fs.existsSync(imagePath)) {
       return res.status(404).json({
         success: false,
         message: "Receipt image file does not exist",
         imagePath,
-        storageKey: receipt.storageKey,
       });
     }
 
-    // 7. Mark receipt as processing
+    // 3. Run OCR and persist the extracted transaction data.
     await prisma.receipt.update({
-      where: {
-        id: receipt.id,
-      },
-      data: {
-        status: "PROCESSING",
-      },
+      where: { id: receipt.id },
+      data: { status: "PROCESSING" },
     });
 
-    // 8. Run OCR
     const ocrResult = await processReceiptOCR(imagePath);
 
-    // 9. Save OCR data
     const ocrData = await prisma.oCRData.upsert({
-      where: {
-        receiptId: receipt.id,
-      },
-
+      where: { receiptId: receipt.id },
       update: {
         transactionReference: ocrResult.transactionReference,
         senderName: ocrResult.senderName,
@@ -711,17 +746,14 @@ export const processOCR = async (req, res) => {
         receiverName: ocrResult.receiverName,
         receiverAccount: ocrResult.receiverAccount,
         amount: ocrResult.amount,
-
         transactionDate: ocrResult.transactionDate
           ? new Date(ocrResult.transactionDate)
           : null,
-
         bankName: ocrResult.bankName,
         rawText: ocrResult.rawText,
         confidence: ocrResult.confidence,
         processedAt: new Date(),
       },
-
       create: {
         receiptId: receipt.id,
         transactionReference: ocrResult.transactionReference,
@@ -730,11 +762,9 @@ export const processOCR = async (req, res) => {
         receiverName: ocrResult.receiverName,
         receiverAccount: ocrResult.receiverAccount,
         amount: ocrResult.amount,
-
         transactionDate: ocrResult.transactionDate
           ? new Date(ocrResult.transactionDate)
           : null,
-
         bankName: ocrResult.bankName,
         rawText: ocrResult.rawText,
         confidence: ocrResult.confidence,
@@ -742,11 +772,234 @@ export const processOCR = async (req, res) => {
       },
     });
 
-    // 10. Mark receipt as processed
+    // 4. Validate the OCR amount.
+    const ocrAmount = Number(ocrData.amount);
+
+    if (
+      ocrData.amount === null ||
+      ocrData.amount === undefined ||
+      !Number.isFinite(ocrAmount) ||
+      ocrAmount <= 0
+    ) {
+      await prisma.$transaction([
+        prisma.payment.update({
+          where: { id: payment.id },
+          data: { status: "NEEDS_REVIEW" },
+        }),
+        prisma.receipt.update({
+          where: { id: receipt.id },
+          data: {
+            status: "PROCESSED",
+            ocrProcessed: true,
+          },
+        }),
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "OCR completed, but no valid amount was extracted. Manual review is required.",
+        ocrData,
+        matching: {
+          matched: false,
+          needsReview: true,
+        },
+      });
+    }
+
+    // 5. Calculate the expected contribution per period.
+    const contributionAmount = Number(
+      startingPeriod.equb.contributionAmount
+    );
+
+    const shares = Number(payment.membership.shares);
+
+    const perPeriodAmount = contributionAmount * shares;
+    const perPeriodCents = Math.round(perPeriodAmount * 100);
+    const ocrCents = Math.round(ocrAmount * 100);
+
+    if (
+      !Number.isFinite(perPeriodCents) ||
+      perPeriodCents <= 0
+    ) {
+      throw new Error(
+        "Unable to calculate the expected contribution per period"
+      );
+    }
+
+    // Allocate complete period contributions only.
+    // Example: 18,900 received / 3,000 per period = 6 periods,
+    // with 900 remaining as extraAmount.
+    const targetPeriodCount = Math.floor(
+      ocrCents / perPeriodCents
+    );
+
+    // 6. Match periods and create allocations transactionally.
+    const matching = await prisma.$transaction(async (tx) => {
+      const existingAllocations =
+        await tx.paymentAllocation.findMany({
+          where: { paymentId: payment.id },
+        });
+
+      const existingPeriodIds = new Set(
+        existingAllocations.map((item) => item.periodId)
+      );
+
+      const existingAllocatedCents = existingAllocations.reduce(
+        (total, item) =>
+          total + Math.round(Number(item.amount) * 100),
+        0
+      );
+
+      // Do not add new allocations if existing ones already exceed
+      // the OCR amount or have inconsistent amounts.
+      if (
+        existingAllocatedCents > ocrCents ||
+        existingAllocatedCents !==
+          existingAllocations.length * perPeriodCents
+      ) {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { status: "NEEDS_REVIEW" },
+        });
+
+        return {
+          matched: false,
+          needsReview: true,
+          reason:
+            "Existing allocations do not match the OCR amount or expected contribution.",
+          allocationsCreated: 0,
+          totalAllocations: existingAllocations.length,
+          allocatedAmount: existingAllocatedCents / 100,
+        };
+      }
+
+      if (
+        targetPeriodCount === 0 ||
+        targetPeriodCount < existingAllocations.length
+      ) {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { status: "NEEDS_REVIEW" },
+        });
+
+        return {
+          matched: false,
+          needsReview: true,
+          reason:
+            "The OCR amount does not cover the existing allocations or a complete period contribution.",
+          allocationsCreated: 0,
+          totalAllocations: existingAllocations.length,
+          allocatedAmount: existingAllocatedCents / 100,
+        };
+      }
+
+      const neededCount =
+        targetPeriodCount - existingAllocations.length;
+
+      if (neededCount === 0) {
+        return {
+          matched: true,
+          needsReview: false,
+          allocationsCreated: 0,
+          totalAllocations: existingAllocations.length,
+          allocatedAmount: existingAllocatedCents / 100,
+        };
+      }
+
+      // Get periods from the submitted period onward.
+      const periods = await tx.paymentPeriod.findMany({
+        where: {
+          equbId: startingPeriod.equbId,
+          periodNumber: {
+            gte: startingPeriod.periodNumber,
+          },
+        },
+        orderBy: {
+          periodNumber: "asc",
+        },
+        include: {
+          allocations: {
+            include: {
+              payment: {
+                select: {
+                  id: true,
+                  membershipId: true,
+                  status: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // A period is unavailable if this same membership already
+      // has an allocation for it on another non-rejected payment.
+      const availablePeriods = periods.filter((candidate) => {
+        if (existingPeriodIds.has(candidate.id)) {
+          return false;
+        }
+
+        const reservedByThisMembership =
+          candidate.allocations.some(
+            (allocation) =>
+              allocation.payment.membershipId ===
+                payment.membershipId &&
+              allocation.payment.id !== payment.id &&
+              allocation.payment.status !== "REJECTED"
+          );
+
+        return !reservedByThisMembership;
+      });
+
+      // Never create a partial allocation plan.
+      if (availablePeriods.length < neededCount) {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { status: "NEEDS_REVIEW" },
+        });
+
+        return {
+          matched: false,
+          needsReview: true,
+          reason:
+            "There are not enough available periods to match the full payment. Manual review is required.",
+          allocationsCreated: 0,
+          totalAllocations: existingAllocations.length,
+          allocatedAmount: existingAllocatedCents / 100,
+        };
+      }
+
+      const periodsToAllocate = availablePeriods.slice(
+        0,
+        neededCount
+      );
+
+      await tx.paymentAllocation.createMany({
+        data: periodsToAllocate.map((candidate) => ({
+          paymentId: payment.id,
+          periodId: candidate.id,
+          amount: perPeriodAmount,
+        })),
+      });
+
+      const allocatedCents =
+        existingAllocatedCents +
+        neededCount * perPeriodCents;
+
+      return {
+        matched: true,
+        needsReview: false,
+        allocationsCreated: neededCount,
+        totalAllocations: existingAllocations.length + neededCount,
+        allocatedAmount: allocatedCents / 100,
+        extraAmount: (ocrCents - allocatedCents) / 100,
+      };
+    });
+
+    // 7. Mark OCR complete after matching has been attempted.
     const updatedReceipt = await prisma.receipt.update({
-      where: {
-        id: receipt.id,
-      },
+      where: { id: receipt.id },
       data: {
         status: "PROCESSED",
         ocrProcessed: true,
@@ -758,21 +1011,29 @@ export const processOCR = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Receipt OCR processed successfully",
+      message: matching.needsReview
+        ? "OCR completed, but payment matching requires manual review."
+        : "OCR processed and payment allocations matched successfully.",
       receipt: updatedReceipt,
       ocrData,
+      period: {
+        id: startingPeriod.id,
+        periodNumber: startingPeriod.periodNumber,
+        equbId: startingPeriod.equbId,
+      },
+      matching: {
+        ...matching,
+        perPeriodAmount,
+        targetPeriodCount,
+      },
     });
   } catch (error) {
     console.error("Process OCR Error:", error);
 
-    // Reset the status if OCR failed.
-    // Do not overwrite an already processed receipt.
     if (receiptId) {
       try {
         const currentReceipt = await prisma.receipt.findUnique({
-          where: {
-            id: receiptId,
-          },
+          where: { id: receiptId },
           select: {
             status: true,
             ocrProcessed: true,
@@ -785,12 +1046,8 @@ export const processOCR = async (req, res) => {
           !currentReceipt.ocrProcessed
         ) {
           await prisma.receipt.update({
-            where: {
-              id: receiptId,
-            },
-            data: {
-              status: "UPLOADED",
-            },
+            where: { id: receiptId },
+            data: { status: "UPLOADED" },
           });
         }
       } catch (updateError) {
@@ -808,6 +1065,9 @@ export const processOCR = async (req, res) => {
     });
   }
 };
+
+
+
 
 // ============================================================
 // APPROVE PAYMENT

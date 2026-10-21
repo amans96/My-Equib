@@ -72,7 +72,6 @@ model Equb {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   memberships          EqubMembership[]
   admins               EqubAdmin[]
   periods              PaymentPeriod[]
@@ -92,8 +91,7 @@ model Equb {
 // ============================================================
 
 model EqubMembership {
-  id String @id @default(uuid())
-
+  id     String @id @default(uuid())
   userId String
   equbId String
 
@@ -102,9 +100,8 @@ model EqubMembership {
 
   shares Decimal @default(1) @db.Decimal(8, 2)
 
-  joinedAt DateTime @default(now())
-
-  status MembershipStatus @default(PENDING)
+  joinedAt DateTime         @default(now())
+  status   MembershipStatus @default(PENDING)
 
   memberNumber String?
 
@@ -117,8 +114,7 @@ model EqubMembership {
   payments Payment[]
 
   lotteryEntries LotteryEntry[]
-
-  lotteryWins LotteryDraw[] @relation("LotteryWinner")
+  lotteryWins    LotteryDraw[]  @relation("LotteryWinner")
 
   @@unique([userId, equbId])
   @@index([equbId])
@@ -152,8 +148,7 @@ model EqubAdmin {
 // ============================================================
 
 model PaymentPeriod {
-  id String @id @default(uuid())
-
+  id     String @id @default(uuid())
   equbId String
 
   equb Equb @relation(fields: [equbId], references: [id], onDelete: Cascade)
@@ -168,8 +163,13 @@ model PaymentPeriod {
 
   expectedAmount Decimal @db.Decimal(12, 2)
 
-  // Relations
+  // Monetary allocations assigned to this period.
   allocations PaymentAllocation[]
+
+  // Payments originally submitted for this period,
+  // including payments that have not been allocated yet.
+  submittedPayments Payment[] @relation("PaymentSubmissionPeriod")
+
   lotteryDraw LotteryDraw?
 
   createdAt DateTime @default(now())
@@ -185,38 +185,41 @@ model PaymentPeriod {
 // ============================================================
 
 model PaymentAllocation {
-  id String @id @default(uuid())
-
+  id        String @id @default(uuid())
   paymentId String
   periodId  String
 
   payment Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   period  PaymentPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
 
-  // Amount from this payment assigned to this period
+  // Amount from this payment assigned to this period.
   amount Decimal @db.Decimal(12, 2)
 
   createdAt DateTime @default(now())
 
-  // A payment cannot allocate to the same period twice
+  // A payment cannot allocate to the same period twice.
   @@unique([paymentId, periodId])
   @@index([paymentId])
   @@index([periodId])
 }
 
 model Payment {
-  id String @id @default(uuid())
-
+  id           String @id @default(uuid())
   membershipId String
   userId       String
 
   membership EqubMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
   user       User           @relation(fields: [userId], references: [id])
 
-  // The total amount sent in this bank transaction
+  // Period where the member originally submitted the receipt.
+  // Independent of monetary allocations created during payment matching.
+  submittedForPeriodId String?
+  submittedForPeriod   PaymentPeriod? @relation("PaymentSubmissionPeriod", fields: [submittedForPeriodId], references: [id], onDelete: SetNull)
+
+  // Amount associated with this payment transaction.
   expectedAmount Decimal  @db.Decimal(12, 2)
   paidAmount     Decimal? @db.Decimal(12, 2)
-  extraAmount Decimal  @default(0) @db.Decimal(12,2)
+  extraAmount    Decimal  @default(0) @db.Decimal(12, 2)
 
   status PaymentStatus @default(PENDING)
 
@@ -227,7 +230,6 @@ model Payment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   allocations   PaymentAllocation[]
   receipts      Receipt[]
   verifications PaymentVerification[]
@@ -235,6 +237,7 @@ model Payment {
   @@index([membershipId])
   @@index([userId])
   @@index([status])
+  @@index([submittedForPeriodId])
 }
 
 // ============================================================
@@ -242,8 +245,7 @@ model Payment {
 // ============================================================
 
 model Receipt {
-  id String @id @default(uuid())
-
+  id           String @id @default(uuid())
   paymentId    String
   uploadedById String
 
@@ -257,14 +259,12 @@ model Receipt {
   mimeType         String?
   fileSize         Int?
 
-  status ReceiptStatus @default(UPLOADED)
-
-  ocrProcessed Boolean @default(false)
+  status       ReceiptStatus @default(UPLOADED)
+  ocrProcessed Boolean       @default(false)
 
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  // Relation
   ocrData OCRData?
 
   @@index([paymentId])
@@ -359,8 +359,7 @@ model BankTransaction {
 // ============================================================
 
 model PaymentVerification {
-  id String @id @default(uuid())
-
+  id         String @id @default(uuid())
   paymentId  String
   reviewerId String
 
@@ -368,12 +367,10 @@ model PaymentVerification {
   reviewer User    @relation(fields: [reviewerId], references: [id])
 
   decision VerificationDecision
-
-  reason String?
+  reason   String?
 
   verifiedAmount Decimal? @db.Decimal(12, 2)
-
-  verifiedAt DateTime @default(now())
+  verifiedAt     DateTime @default(now())
 
   @@index([paymentId])
   @@index([reviewerId])
