@@ -1007,8 +1007,16 @@ const handleProcessOCR = async (receiptId) => {
                   </th>
 
                   <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Paid
-                  </th>
+  Full Payment
+</th>
+
+<th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+  Allocated
+</th>
+
+<th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+  Extra Amount
+</th>
 
                   <th className="px-6 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-500">
                     Payment
@@ -1133,16 +1141,44 @@ const handleProcessOCR = async (receiptId) => {
 
                       {/* PAID */}
 
-                      <td className="px-6 py-4 text-right">
+                      {/* FULL PAYMENT AMOUNT */}
 
-                        <p className="text-sm font-semibold text-gray-900">
-                          {formatAmount(
-                            payment?.paidAmount,
-                            equb?.currency
-                          )}
-                        </p>
+<td className="px-6 py-4 text-right">
+  <p className="text-sm font-semibold text-gray-900">
+    {formatAmount(
+      payment?.paidAmount,
+      equb?.currency
+    )}
+  </p>
+</td>
 
-                      </td>
+{/* ALLOCATED TO THIS PERIOD */}
+
+<td className="px-6 py-4 text-right">
+  <p className="text-sm font-semibold text-gray-900">
+    {formatAmount(
+      payment?.allocatedAmount,
+      equb?.currency
+    )}
+  </p>
+</td>
+
+{/* EXTRA AMOUNT */}
+
+<td className="px-6 py-4 text-right">
+  <p className="text-sm font-semibold text-amber-700">
+    {formatAmount(
+      payment?.extraAmount,
+      equb?.currency
+    )}
+  </p>
+
+  {Number(payment?.extraAmount ?? 0) > 0 && (
+    <p className="mt-1 text-xs text-amber-600">
+      Not yet allocated
+    </p>
+  )}
+</td>
 
                       {/* PAYMENT */}
 
@@ -1734,83 +1770,91 @@ const handleProcessOCR = async (receiptId) => {
 
                   {/* AMOUNTS */}
 
-                  <div className="mt-5 grid grid-cols-2 gap-4">
+               <div className="mt-5 grid grid-cols-2 gap-4">
+  {/* Expected amount for this payment period */}
+  <div>
+    <p className="text-xs text-gray-500">Expected</p>
 
-                    <div>
-                      <p className="text-xs text-gray-500">
-                        Expected
-                      </p>
+    <p className="mt-1 text-sm font-semibold text-gray-900">
+      {formatAmount(member.expectedAmount, equb?.currency)}
+    </p>
+  </div>
 
-                      <p className="mt-1 text-sm font-semibold text-gray-900">
-                        {formatAmount(
-                          member.expectedAmount,
-                          equb?.currency
-                        )}
-                      </p>
-                    </div>
+  {/* Full amount received from the member */}
+  <div>
+    <p className="text-xs text-gray-500">Full Payment</p>
 
-                    <div>
-                      <p className="text-xs text-gray-500">
-                        Paid
-                      </p>
+    <p className="mt-1 text-sm font-semibold text-gray-900">
+      {formatAmount(payment?.paidAmount, equb?.currency)}
+    </p>
+  </div>
 
-                      <p className="mt-1 text-sm font-semibold text-gray-900">
-                        {formatAmount(
-                          payment?.paidAmount,
-                          equb?.currency
-                        )}
-                      </p>
-                    </div>
+  {/* Amount allocated to this specific payment period */}
+  <div>
+    <p className="text-xs text-gray-500">Allocated to Period</p>
 
-                    <div>
-                      <p className="text-xs text-gray-500">
-                        Receipt
-                      </p>
+    <p className="mt-1 text-sm font-semibold text-gray-900">
+      {formatAmount(payment?.allocatedAmount, equb?.currency)}
+    </p>
+  </div>
 
-                      <div className="mt-1">
+  {/* Remaining amount not allocated to a payment period */}
+  <div>
+    <p className="text-xs text-gray-500">Extra Amount</p>
 
-                        {receipt ? (
-                          <span
-                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getReceiptStatusClasses(
-                              receipt.status
-                            )}`}
-                          >
-                            {receipt.status}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-400">
-                            No receipt
-                          </span>
-                        )}
+    <p className="mt-1 text-sm font-semibold text-gray-900">
+      {formatAmount(payment?.extraAmount, equb?.currency)}
+    </p>
 
-                      </div>
-                    </div>
+    {Number(payment?.extraAmount ?? 0) > 0 && (
+      <p className="mt-1 text-xs text-amber-600">
+        Not yet allocated
+      </p>
+    )}
+  </div>
 
-                    <div>
-                      <p className="text-xs text-gray-500">
-                        Verification
-                      </p>
+  {/* Receipt status */}
+  <div>
+    <p className="text-xs text-gray-500">Receipt</p>
 
-                      <div className="mt-1">
+    <div className="mt-1">
+      {receipt ? (
+        <span
+          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getReceiptStatusClasses(
+            receipt.status
+          )}`}
+        >
+          {receipt.status}
+        </span>
+      ) : (
+        <span className="text-sm text-gray-400">
+          No receipt
+        </span>
+      )}
+    </div>
+  </div>
 
-                        {verification ? (
-                          <span
-                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getPaymentStatusClasses(
-                              verification.decision
-                            )}`}
-                          >
-                            {verification.decision}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-400">
-                            Not reviewed
-                          </span>
-                        )}
+  {/* Verification status */}
+  <div>
+    <p className="text-xs text-gray-500">Verification</p>
 
-                      </div>
-                    </div>
-
-                  </div>
+    <div className="mt-1">
+      {verification ? (
+        <span
+          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getPaymentStatusClasses(
+            verification.decision
+          )}`}
+        >
+          {verification.decision}
+        </span>
+      ) : (
+        <span className="text-sm text-gray-400">
+          Not reviewed
+        </span>
+      )}
+    </div>
+  </div>
+</div>
 
                   {/* OCR INFORMATION */}
 
