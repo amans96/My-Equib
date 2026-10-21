@@ -696,81 +696,80 @@ export const processOCR = async (req, res) => {
       });
     }
 
-    if (receipt.ocrProcessed && receipt.ocrData) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "OCR has already been processed. Do not process the same receipt again.",
-        ocrData: receipt.ocrData,
+  
+
+    
+    // 3. Reuse existing OCR data when available.
+    // Otherwise, extract and save the receipt data.
+    let ocrData = receipt.ocrData;
+
+    if (!receipt.ocrProcessed || !ocrData) {
+      if (!receipt.storageKey) {
+        return res.status(400).json({
+          success: false,
+          message: "Receipt storage key is missing",
+        });
+      }
+
+      const fileName = path.basename(receipt.storageKey);
+
+      const imagePath = path.join(
+        process.cwd(),
+        "uploads",
+        "receipts",
+        fileName
+      );
+
+      if (!fs.existsSync(imagePath)) {
+        return res.status(404).json({
+          success: false,
+          message: "Receipt image file does not exist",
+          imagePath,
+        });
+      }
+
+      await prisma.receipt.update({
+        where: { id: receipt.id },
+        data: { status: "PROCESSING" },
+      });
+
+      const ocrResult = await processReceiptOCR(imagePath);
+
+      ocrData = await prisma.oCRData.upsert({
+        where: { receiptId: receipt.id },
+        update: {
+          transactionReference: ocrResult.transactionReference,
+          senderName: ocrResult.senderName,
+          senderAccount: ocrResult.senderAccount,
+          receiverName: ocrResult.receiverName,
+          receiverAccount: ocrResult.receiverAccount,
+          amount: ocrResult.amount,
+          transactionDate: ocrResult.transactionDate
+            ? new Date(ocrResult.transactionDate)
+            : null,
+          bankName: ocrResult.bankName,
+          rawText: ocrResult.rawText,
+          confidence: ocrResult.confidence,
+          processedAt: new Date(),
+        },
+        create: {
+          receiptId: receipt.id,
+          transactionReference: ocrResult.transactionReference,
+          senderName: ocrResult.senderName,
+          senderAccount: ocrResult.senderAccount,
+          receiverName: ocrResult.receiverName,
+          receiverAccount: ocrResult.receiverAccount,
+          amount: ocrResult.amount,
+          transactionDate: ocrResult.transactionDate
+            ? new Date(ocrResult.transactionDate)
+            : null,
+          bankName: ocrResult.bankName,
+          rawText: ocrResult.rawText,
+          confidence: ocrResult.confidence,
+          processedAt: new Date(),
+        },
       });
     }
-
-    if (!receipt.storageKey) {
-      return res.status(400).json({
-        success: false,
-        message: "Receipt storage key is missing",
-      });
-    }
-
-    const fileName = path.basename(receipt.storageKey);
-
-    const imagePath = path.join(
-      process.cwd(),
-      "uploads",
-      "receipts",
-      fileName
-    );
-
-    if (!fs.existsSync(imagePath)) {
-      return res.status(404).json({
-        success: false,
-        message: "Receipt image file does not exist",
-        imagePath,
-      });
-    }
-
-    // 3. Run OCR and persist the extracted transaction data.
-    await prisma.receipt.update({
-      where: { id: receipt.id },
-      data: { status: "PROCESSING" },
-    });
-
-    const ocrResult = await processReceiptOCR(imagePath);
-
-    const ocrData = await prisma.oCRData.upsert({
-      where: { receiptId: receipt.id },
-      update: {
-        transactionReference: ocrResult.transactionReference,
-        senderName: ocrResult.senderName,
-        senderAccount: ocrResult.senderAccount,
-        receiverName: ocrResult.receiverName,
-        receiverAccount: ocrResult.receiverAccount,
-        amount: ocrResult.amount,
-        transactionDate: ocrResult.transactionDate
-          ? new Date(ocrResult.transactionDate)
-          : null,
-        bankName: ocrResult.bankName,
-        rawText: ocrResult.rawText,
-        confidence: ocrResult.confidence,
-        processedAt: new Date(),
-      },
-      create: {
-        receiptId: receipt.id,
-        transactionReference: ocrResult.transactionReference,
-        senderName: ocrResult.senderName,
-        senderAccount: ocrResult.senderAccount,
-        receiverName: ocrResult.receiverName,
-        receiverAccount: ocrResult.receiverAccount,
-        amount: ocrResult.amount,
-        transactionDate: ocrResult.transactionDate
-          ? new Date(ocrResult.transactionDate)
-          : null,
-        bankName: ocrResult.bankName,
-        rawText: ocrResult.rawText,
-        confidence: ocrResult.confidence,
-        processedAt: new Date(),
-      },
-    });
 
     // 4. Validate the OCR amount.
     const ocrAmount = Number(ocrData.amount);
@@ -953,22 +952,35 @@ export const processOCR = async (req, res) => {
       });
 
       // Never create a partial allocation plan.
-      if (availablePeriods.length < neededCount) {
-        await tx.payment.update({
-          where: { id: payment.id },
-          data: { status: "NEEDS_REVIEW" },
-        });
+    // Never create a partial allocation plan.
+if (availablePeriods.length < neededCount) {
+  await tx.payment.update({
+    where: { id: payment.id },
+    data: { status: "NEEDS_REVIEW" },
+  });
 
-        return {
-          matched: false,
-          needsReview: true,
-          reason:
-            "There are not enough available periods to match the full payment. Manual review is required.",
-          allocationsCreated: 0,
-          totalAllocations: existingAllocations.length,
-          allocatedAmount: existingAllocatedCents / 100,
-        };
-      }
+  return {
+    matched: false,
+    needsReview: true,
+    reason:
+      "Not enough available payment periods to cover the OCR amount.",
+    diagnostics: {
+      ocrAmount: ocrCents / 100,
+      contributionPerShare: contributionAmount,
+      membershipShares: shares,
+      perPeriodAmount,
+      targetPeriodCount,
+      existingAllocationCount: existingAllocations.length,
+      neededCount,
+      availablePeriodCount: availablePeriods.length,
+      startingPeriodNumber: startingPeriod.periodNumber,
+      equbId: startingPeriod.equbId,
+    },
+    allocationsCreated: 0,
+    totalAllocations: existingAllocations.length,
+    allocatedAmount: existingAllocatedCents / 100,
+  };
+}
 
       const periodsToAllocate = availablePeriods.slice(
         0,
@@ -1137,13 +1149,27 @@ export const approvePayment = async (req, res) => {
     const allocations = payment.allocations;
 
     // 3. Payment must have period allocations.
-    if (!allocations.length) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Payment has no period allocations. Process the receipt with OCR first.",
-      });
-    }
+if (!allocations.length) {
+  const ocrCompleted =
+    receipt.ocrProcessed &&
+    receipt.status === "PROCESSED" &&
+    Boolean(receipt.ocrData);
+
+  return res.status(400).json({
+    success: false,
+    message: ocrCompleted
+      ? "This payment has no period allocations. Retry OCR matching or resolve the matching issue before approval."
+      : "Receipt OCR must be completed before approval.",
+    code: ocrCompleted
+      ? "ALLOCATION_MATCHING_FAILED"
+      : "OCR_REQUIRED",
+    canRetryMatching: ocrCompleted,
+    receiptId: receipt.id,
+    paymentId: payment.id,
+    ocrAmount: receipt.ocrData?.amount ?? null,
+    paymentStatus: payment.status,
+  });
+}
 
     // 4. ADMIN can only approve payments for their own Equb.
     const unauthorizedAllocation = allocations.some(
