@@ -772,40 +772,42 @@ export const processOCR = async (req, res) => {
     }
 
     // 4. Validate the OCR amount.
-    const ocrAmount = Number(ocrData.amount);
 
-    if (
-      ocrData.amount === null ||
-      ocrData.amount === undefined ||
-      !Number.isFinite(ocrAmount) ||
-      ocrAmount <= 0
-    ) {
-      await prisma.$transaction([
-        prisma.payment.update({
-          where: { id: payment.id },
-          data: { status: "NEEDS_REVIEW" },
-        }),
-        prisma.receipt.update({
-          where: { id: receipt.id },
-          data: {
-            status: "PROCESSED",
-            ocrProcessed: true,
-          },
-        }),
-      ]);
 
-      return res.status(200).json({
-        success: true,
-        message:
-          "OCR completed, but no valid amount was extracted. Manual review is required.",
-        ocrData,
-        matching: {
-          matched: false,
-          needsReview: true,
-        },
-      });
-    }
+   // 4. Validate the OCR amount.
+const ocrAmount = Number(ocrData.amount);
 
+if (
+  ocrData.amount === null ||
+  ocrData.amount === undefined ||
+  !Number.isFinite(ocrAmount) ||
+  ocrAmount <= 0
+) {
+  await prisma.$transaction([
+    prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: "NEEDS_REVIEW" },
+    }),
+    prisma.receipt.update({
+      where: { id: receipt.id },
+      data: {
+        status: "PROCESSED",
+        ocrProcessed: true,
+      },
+    }),
+  ]);
+
+  return res.status(200).json({
+    success: true,
+    message:
+      "OCR completed, but no valid amount was extracted. Manual review is required.",
+    ocrData,
+    matching: {
+      matched: false,
+      needsReview: true,
+    },
+  });
+}
     // 5. Calculate the expected contribution per period.
     const contributionAmount = Number(
       startingPeriod.equb.contributionAmount
@@ -1010,6 +1012,86 @@ if (availablePeriods.length < neededCount) {
     });
 
     // 7. Mark OCR complete after matching has been attempted.
+        // 7. Mark OCR complete after matching has been attempted.
+    const savedAllocations = await prisma.paymentAllocation.findMany({
+      where: {
+        paymentId: payment.id,
+      },
+      include: {
+        period: {
+          select: {
+            id: true,
+            periodNumber: true,
+            equbId: true,
+          },
+        },
+      },
+      orderBy: {
+        period: {
+          periodNumber: "asc",
+        },
+      },
+    });
+
+
+    const actualAllocatedCents = savedAllocations.reduce(
+      (total, allocation) =>
+        total + Math.round(Number(allocation.amount) * 100),
+      0
+    );
+
+    const actualAllocatedAmount = actualAllocatedCents / 100;
+  
+    const ocrAmountCents = Math.round(ocrAmount * 100);
+
+    // Only mark matching successful when the allocation is valid.
+   const allocationMatchesOCR =
+  Number.isFinite(ocrAmount) &&
+  ocrAmountCents > 0 &&
+  savedAllocations.length > 0 &&
+  actualAllocatedCents <= ocrAmountCents &&
+  savedAllocations.every(
+    (allocation) =>
+      Math.round(Number(allocation.amount) * 100) ===
+      Math.round(perPeriodAmount * 100)
+  );
+
+    const ocrConfidence = Number(ocrData.confidence ?? 0);
+
+    const finalNeedsReview =
+      matching.needsReview ||
+      !allocationMatchesOCR ||
+      ocrConfidence < 60;
+
+    const reviewReasons = [];
+
+    if (!allocationMatchesOCR) {
+      reviewReasons.push(
+        "Allocations do not match the OCR amount or expected contribution."
+      );
+    }
+
+    if (ocrConfidence < 60) {
+      reviewReasons.push(
+        `OCR confidence is ${ocrConfidence}; manual verification is required.`
+      );
+    }
+
+    if (matching.reason) {
+      reviewReasons.push(matching.reason);
+    }
+
+    const reviewReason = reviewReasons.length
+      ? reviewReasons.join(" ")
+      : null;
+
+    if (finalNeedsReview) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: "NEEDS_REVIEW" },
+      });
+    }
+
     const updatedReceipt = await prisma.receipt.update({
       where: { id: receipt.id },
       data: {
@@ -1023,7 +1105,7 @@ if (availablePeriods.length < neededCount) {
 
     return res.status(200).json({
       success: true,
-      message: matching.needsReview
+      message: finalNeedsReview
         ? "OCR completed, but payment matching requires manual review."
         : "OCR processed and payment allocations matched successfully.",
       receipt: updatedReceipt,
@@ -1037,6 +1119,21 @@ if (availablePeriods.length < neededCount) {
         ...matching,
         perPeriodAmount,
         targetPeriodCount,
+        actualAllocationCount: savedAllocations.length,
+        actualAllocatedAmount,
+        ocrAmount,
+        unallocatedAmount: Math.max(
+          0,
+          Math.round((ocrAmount - actualAllocatedAmount) * 100) / 100
+        ),
+        allocationMatchesOCR,
+        needsReview: finalNeedsReview,
+        reviewReason,
+        allocatedPeriods: savedAllocations.map((allocation) => ({
+          periodId: allocation.period.id,
+          periodNumber: allocation.period.periodNumber,
+          amount: Number(allocation.amount),
+        })),
       },
     });
   } catch (error) {
@@ -1045,7 +1142,9 @@ if (availablePeriods.length < neededCount) {
     if (receiptId) {
       try {
         const currentReceipt = await prisma.receipt.findUnique({
-          where: { id: receiptId },
+          where: {
+            id: receiptId,
+          },
           select: {
             status: true,
             ocrProcessed: true,
@@ -1058,8 +1157,12 @@ if (availablePeriods.length < neededCount) {
           !currentReceipt.ocrProcessed
         ) {
           await prisma.receipt.update({
-            where: { id: receiptId },
-            data: { status: "UPLOADED" },
+            where: {
+              id: receiptId,
+            },
+            data: {
+              status: "UPLOADED",
+            },
           });
         }
       } catch (updateError) {
@@ -1077,7 +1180,6 @@ if (availablePeriods.length < neededCount) {
     });
   }
 };
-
 
 
 

@@ -609,7 +609,7 @@ export const processOCR = async (req, res) => {
         },
       });
 
-      const updatedReceipt = await tx.receipt.update({
+         const updatedReceipt = await tx.receipt.update({
         where: {
           id: receipt.id,
         },
@@ -622,31 +622,71 @@ export const processOCR = async (req, res) => {
         },
       });
 
+      // Fetch the allocations actually saved in the database.
+      const savedAllocations = await tx.paymentAllocation.findMany({
+        where: {
+          paymentId: payment.id,
+        },
+        include: {
+          period: {
+            select: {
+              id: true,
+              periodNumber: true,
+              equbId: true,
+            },
+          },
+        },
+        orderBy: {
+          period: {
+            periodNumber: "asc",
+          },
+        },
+      });
+
+      const actualAllocatedCents = savedAllocations.reduce(
+        (total, allocation) =>
+          total + Math.round(Number(allocation.amount) * 100),
+        0
+      );
+
+      const actualAllocatedAmount = actualAllocatedCents / 100;
+
+      const expectedAllocatedAmount =
+        allocationsCreated * amountPerPeriod;
+
+      const hasCorrectAllocations =
+        savedAllocations.length === allocationsCreated &&
+        Math.abs(actualAllocatedAmount - expectedAllocatedAmount) < 0.01;
+
       return {
         ocrData,
         payment: updatedPayment,
         receipt: updatedReceipt,
         allocationsCreated,
+        savedAllocations,
+        actualAllocatedAmount,
+        hasCorrectAllocations,
       };
     });
 
-    // 12. Return the result
+    // 12. Return the actual result.
     return res.status(200).json({
       success: true,
-      message: result.allocationsCreated
+      message: result.hasCorrectAllocations
         ? "OCR completed and payment periods allocated successfully."
-        : "OCR completed, but the payment requires manual review.",
+        : "OCR completed, but the saved allocations require manual review.",
       receipt: result.receipt,
       ocrData: result.ocrData,
       payment: result.payment,
       allocationsCreated: result.allocationsCreated,
-      allocatedPeriods: result.allocationsCreated
-        ? allocationPeriods.map((period) => ({
-            periodId: period.id,
-            periodNumber: period.periodNumber,
-            amount: amountPerPeriod,
-          }))
-        : [],
+      actualAllocationCount: result.savedAllocations.length,
+      actualAllocatedAmount: result.actualAllocatedAmount,
+      hasCorrectAllocations: result.hasCorrectAllocations,
+      allocatedPeriods: result.savedAllocations.map((allocation) => ({
+        periodId: allocation.period.id,
+        periodNumber: allocation.period.periodNumber,
+        amount: Number(allocation.amount),
+      })),
       reviewReason: reviewReason || null,
     });
   } catch (error) {
